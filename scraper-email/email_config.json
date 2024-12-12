@@ -1,0 +1,63 @@
+{
+  "templates": {
+    "site_not_found": {
+      "subject": "Il tuo sito web non è stato trovato",
+      "body": [
+        "<html>",
+        "<body>",
+        "<p>Ciao {name},</p>",
+        "<p>Abbiamo cercato di visitare il sito web della tua attività, ma sembra che non sia disponibile.</p>",
+        "<p>Ti invitiamo a contattarci per creare un sito web che ti rappresenti al meglio!</p>",
+        "<p>Contattaci al numero: <strong>351 972 8141</strong></p>",
+        "<p>Oppure visita il nostro sito: <a href=\"https://www.effemmeweb.it\">www.effemmeweb.it</a></p>",
+        "</body>",
+        "</html>"
+      ]
+    },
+    "site_http": {
+      "subject": "Il tuo sito web non è sicuro",
+      "body": [
+        "<html>",
+        "<body>",
+        "<p>Ciao {name},</p>",
+        "<p>Abbiamo visitato il sito web della tua attività e abbiamo notato che è accessibile tramite il protocollo <strong>HTTP</strong>.</p>",
+        "<p>Ti consigliamo di passare a <strong>HTTPS</strong> per una maggiore sicurezza e per migliorare la tua posizione nei motori di ricerca.</p>",
+        "<p>Contattaci per aiuto su come fare questa modifica.</p>",
+        "<p>Contattaci al numero: <strong>351 972 8141</strong></p>",
+        "<p>Oppure visita il nostro sito: <a href=\"https://www.effemmeweb.it\">www.effemmeweb.it</a></p>",
+        "</body>",
+        "</html>"
+      ]
+    },
+    "seo_score_low": {
+      "subject": "Migliora il tuo sito web con un SEO migliore",
+      "body": [
+        "<html>",
+        "<body>",
+        "<p>Ciao {name},</p>",
+        "<p>Abbiamo analizzato il sito web della tua attività e il punteggio SEO è inferiore a <strong>75</strong> su 100.</p>",
+        "<p>Ti offriamo un servizio di ottimizzazione SEO per migliorare la visibilità del tuo sito sui motori di ricerca.</p>",
+        "<p>Contattaci per maggiori dettagli e per scoprire come possiamo aiutarti a crescere online!</p>",
+        "<p>Contattaci al numero: <strong>351 972 8141</strong></p>",
+        "<p>Oppure visita il nostro sito: <a href=\"https://www.effemmeweb.it\">www.effemmeweb.it</a></p>",
+        "</body>",
+        "</html>"
+      ]
+    },
+    "cookie_banner_missing": {
+      "subject": "Aggiungi un avviso per i cookie sul tuo sito",
+      "body": [
+        "<html>",
+        "<body>",
+        "<p>Ciao {name},</p>",
+        "<p>Abbiamo visitato il sito web della tua attività e non abbiamo trovato un banner per l'informativa sui cookie.</p>",
+        "<p>Ricordati che è obbligatorio informare i visitatori sull'uso dei cookie per rispettare le normative sulla privacy.</p>",
+        "<p>Contattaci per aggiungere un banner personalizzato per i cookie al tuo sito.</p>",
+        "<p>Contattaci al numero: <strong>351 972 8141</strong></p>",
+        "<p>Oppure visita il nostro sito: <a href=\"https://www.effemmeweb.it\">www.effemmeweb.it</a></p>",
+        "</body>",
+        "</html>"
+      ]
+    }
+  }
+}
