@@ -828,7 +828,7 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
         "aliexpress.com",
         "zalando.it",
         "asos.com",
-        "kayak.com"
+        "kayak.com",
         ".gov.it",
     }
 
