@@ -614,7 +614,7 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
     }
 
     opts := []func(*scrapemateapp.Config) error{
-        scrapemateapp.WithConcurrency(20),
+        scrapemateapp.WithConcurrency(30),
         scrapemateapp.WithExitOnInactivity(3 * time.Minute),
         scrapemateapp.WithJS(scrapemateapp.DisableImages()),
     }
