@@ -690,25 +690,48 @@ func fetchHeaders(page *rod.Page) http.Header {
 }
 
 func checkSiteAvailability(url string) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return "No", fmt.Errorf("errore: %v", err)
-	}
-	defer resp.Body.Close()
+    client := &http.Client{
+        Timeout: 10 * time.Second,
+        CheckRedirect: func(req *http.Request, via []*http.Request) error {
+            // Permetti al client di seguire un massimo di 5 redirect
+            if len(via) >= 5 {
+                return http.ErrUseLastResponse
+            }
+            return nil
+        },
+    }
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return "Yes", nil
-	}
+    resp, err := client.Get(url)
+    if err != nil {
+        if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+            return "No - Timeout", nil
+        }
+        return "No - Errore di connessione", nil
+    }
+    defer resp.Body.Close()
 
-	switch resp.StatusCode {
-	case 404:
-		return "No - 404 Not Found", nil
-	case 500:
-		return "No - 500 Internal Server Error", nil
-	default:
-		return fmt.Sprintf("No - Errore %d", resp.StatusCode), nil
-	}
+    // Gestione dei codici di stato
+    switch resp.StatusCode {
+    case http.StatusOK:
+        return "Yes", nil
+    case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+        return "Yes - Redirect", nil
+    case http.StatusForbidden:
+        return "No - Accesso Negato (403)", nil
+    case http.StatusNotFound:
+        return "No - Pagina Non Trovata (404)", nil
+    case http.StatusInternalServerError:
+        return "No - Errore Interno del Server (500)", nil
+    default:
+        if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+            return fmt.Sprintf("No - Errore Cliente (%d)", resp.StatusCode), nil
+        } else if resp.StatusCode >= 500 {
+            return fmt.Sprintf("No - Errore Server (%d)", resp.StatusCode), nil
+        }
+    }
+
+    // Se nessun caso si applica, considera il sito come non disponibile
+    return "No - Stato Non Riconosciuto", nil
 }
 
 func checkSiteMaintenance(html string) string {
