@@ -220,20 +220,30 @@ func getHostingProvider(domain string) (string, error) {
 
 // Funzione per normalizzare il nameserver (rimuovendo prefissi come "ns-cloud-")
 func normalizeNameserver(nameserver string) string {
-    prefixes := []string{
-        "ns-cloud-", "dns1.", "dns2.", "dns3.", "dns4.", "ns1.", "ns2.", "ns3.", "ns4.",
-    }
+    // Rimuovi prefissi specifici da ns1 a ns100, dns1 a dns100, ns-cloud- e awsdns-
+    for i := 1; i <= 100; i++ {
+        prefixes := []string{
+            fmt.Sprintf("dns%d.", i),
+            fmt.Sprintf("ns%d.", i),
+            fmt.Sprintf("ns-cloud-%d.", i),
+            fmt.Sprintf("awsdns-%d.", i),
+        }
 
-    for _, prefix := range prefixes {
-        if strings.HasPrefix(nameserver, prefix) {
-            nameserver = strings.TrimPrefix(nameserver, prefix)
-            break
+        for _, prefix := range prefixes {
+            if strings.HasPrefix(nameserver, prefix) {
+                nameserver = strings.TrimPrefix(nameserver, prefix)
+                break
+            }
         }
     }
 
-    // Rimuovi solo suffissi generici come `.com.` o `.net.` se presenti
-    if strings.HasSuffix(nameserver, ".") {
-        nameserver = strings.TrimSuffix(nameserver, ".")
+    // Rimuovi eventuali suffissi come `.com.`, `.net.`, o il carattere finale `.`
+    nameserver = strings.TrimSuffix(nameserver, ".")
+    if strings.Contains(nameserver, ".") {
+        parts := strings.Split(nameserver, ".")
+        if len(parts) > 1 {
+            nameserver = strings.Join(parts[:len(parts)-1], ".")
+        }
     }
 
     return nameserver
