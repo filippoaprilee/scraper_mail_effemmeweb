@@ -17,6 +17,7 @@ import (
 
 	
 	"github.com/go-rod/rod"
+    "github.com/go-rod/rod/lib/proto"
 )
 // "github.com/PuerkitoBio/goquery"
 // "github.com/domainr/whois"
@@ -48,6 +49,8 @@ type Entry struct {
     MobilePerformance string  `json:"mobile_performance"`  // Cambiato a string
     DesktopPerformance string `json:"desktop_performance"` // Cambiato a string
     SeoScore          string  `json:"seo_score"`           // Cambiato a string
+    SiteAvailability    string `json:"site_availability"`   // Nuovo campo
+    SiteMaintenance     string `json:"site_maintenance"`    // Nuovo campo
 }
 
 type PagespeedResponse struct {
@@ -101,6 +104,8 @@ func loadExcludedWebsites(filename string) (map[string]struct{}, error) {
 // Funzione per ottenere i punteggi SEO, Mobile e Desktop
 func getPageSpeedScores(url string) (int, int, float64, error) {
     apiKey := "AIzaSyD13bhKEEwzY15yMgsolkVvMCuToZsHPlU" // Inserisci la tua API Key qui
+    maxAttempts := 3    // Numero massimo di tentativi per ogni richiesta
+    delay := 2 * time.Second
 
     // URL per ottenere i punteggi SEO
     seoURL := fmt.Sprintf("https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=%s&strategy=desktop&category=seo&key=%s", url, apiKey)
@@ -113,58 +118,71 @@ func getPageSpeedScores(url string) (int, int, float64, error) {
     var errSeo, errMobile, errDesktop error
     var wg sync.WaitGroup
 
-    // Avvio delle goroutine per effettuare le richieste in parallelo
-    wg.Add(1)
+    // Funzione per eseguire richieste con tentativi ripetuti
+    requestWithRetries := func(url string, data *PagespeedResponse, err *error) {
+        for attempt := 1; attempt <= maxAttempts; attempt++ {
+            resp, reqErr := http.Get(url)
+            if reqErr != nil {
+                *err = fmt.Errorf("errore tentativo %d: %v", attempt, reqErr)
+                time.Sleep(delay)
+                continue
+            }
+            defer resp.Body.Close()
+
+            if resp.StatusCode == http.StatusTooManyRequests { // Gestione limite API
+                retryAfter := resp.Header.Get("Retry-After")
+                if seconds, parseErr := strconv.Atoi(retryAfter); parseErr == nil {
+                    time.Sleep(time.Duration(seconds) * time.Second)
+                } else {
+                    time.Sleep(delay)
+                }
+                *err = fmt.Errorf("limite API raggiunto, ritentando...")
+                continue
+            }
+
+            body, readErr := io.ReadAll(resp.Body)
+            if readErr != nil {
+                *err = fmt.Errorf("errore nella lettura del corpo della risposta: %v", readErr)
+                time.Sleep(delay)
+                continue
+            }
+
+            if jsonErr := json.Unmarshal(body, data); jsonErr != nil {
+                *err = fmt.Errorf("errore nel parsing JSON: %v", jsonErr)
+                time.Sleep(delay)
+                continue
+            }
+
+            *err = nil // Nessun errore
+            break
+        }
+    }
+
+    // Avvio richieste in parallelo con tentativi
+    wg.Add(3)
     go func() {
         defer wg.Done()
-        seoResp, err := http.Get(seoURL)
-        if err != nil {
-            errSeo = fmt.Errorf("errore SEO: %v", err)
-            return
-        }
-        defer seoResp.Body.Close()
-        body, _ := io.ReadAll(seoResp.Body)
-        errSeo = json.Unmarshal(body, &seoData)
+        requestWithRetries(seoURL, &seoData, &errSeo)
     }()
-
-    wg.Add(1)
     go func() {
         defer wg.Done()
-        mobileResp, err := http.Get(mobileURL)
-        if err != nil {
-            errMobile = fmt.Errorf("errore mobile: %v", err)
-            return
-        }
-        defer mobileResp.Body.Close()
-        body, _ := io.ReadAll(mobileResp.Body)
-        errMobile = json.Unmarshal(body, &mobileData)
+        requestWithRetries(mobileURL, &mobileData, &errMobile)
     }()
-
-    wg.Add(1)
     go func() {
         defer wg.Done()
-        desktopResp, err := http.Get(desktopURL)
-        if err != nil {
-            errDesktop = fmt.Errorf("errore desktop: %v", err)
-            return
-        }
-        defer desktopResp.Body.Close()
-        body, _ := io.ReadAll(desktopResp.Body)
-        errDesktop = json.Unmarshal(body, &desktopData)
+        requestWithRetries(desktopURL, &desktopData, &errDesktop)
     }()
-
-    // Attendi che tutte le goroutine finiscano
     wg.Wait()
 
-    // Verifica che non ci siano errori nelle richieste
+    // Gestione errori finali
     if errSeo != nil {
         return 0, 0, 0, fmt.Errorf("errore nella richiesta SEO: %v", errSeo)
     }
     if errMobile != nil {
-        return 0, 0, 0, fmt.Errorf("errore nella richiesta mobile: %v", errMobile)
+        return 0, 0, 0, fmt.Errorf("errore nella richiesta Mobile: %v", errMobile)
     }
     if errDesktop != nil {
-        return 0, 0, 0, fmt.Errorf("errore nella richiesta desktop: %v", errDesktop)
+        return 0, 0, 0, fmt.Errorf("errore nella richiesta Desktop: %v", errDesktop)
     }
 
     // Accedi ai punteggi di Performance e SEO
@@ -172,7 +190,6 @@ func getPageSpeedScores(url string) (int, int, float64, error) {
     desktopPerformance := int(desktopData.LighthouseResult.Categories.Performance.Score * 100)
     seoScore := seoData.LighthouseResult.Categories.SEO.Score * 100
 
-    // Restituisci i punteggi mobile, desktop e SEO
     return mobilePerformance, desktopPerformance, seoScore, nil
 }
 
@@ -440,6 +457,10 @@ func identificaHostingDaNameserver(nameserver string) string {
     "mvnet-dns.eu": "MVNet",
     "interferenza.it": "Interferenza Hosting",
     "interferenza.net": "Interferenza Hosting",
+    "easygreenhosting.it": "Easy Green Hosting",
+    "kreativmedia.ch": "KreativMedia Hosting",
+    "ricpic.com": "Provider con OVH",
+    "pop.it": "Provider con Aruba",
 
     }
 
@@ -531,7 +552,7 @@ func detectTechnology(url string, cmsNames map[string][]string) (string, error) 
 // fetchHTML scarica il contenuto HTML di una pagina e le relative intestazioni HTTP.
 func fetchHTML(url string) (string, http.Header) {
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: 15 * time.Second,
 	}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -540,7 +561,37 @@ func fetchHTML(url string) (string, http.Header) {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	return string(body), resp.Header
+	headers := resp.Header
+
+	// Scarica risorse esterne menzionate
+	externalScripts := extractScriptSources(string(body))
+	for _, scriptURL := range externalScripts {
+		go fetchResource(scriptURL) // Scarica asincronicamente
+	}
+
+	return string(body), headers
+}
+
+// Estrai URL dei file script
+func extractScriptSources(html string) []string {
+	var urls []string
+	re := regexp.MustCompile(`<script[^>]+src="([^"]+)"`)
+	matches := re.FindAllStringSubmatch(html, -1)
+	for _, match := range matches {
+		urls = append(urls, match[1])
+	}
+	return urls
+}
+
+// Scarica una risorsa esterna
+func fetchResource(url string) string {
+	resp, err := http.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	content, _ := io.ReadAll(resp.Body)
+	return string(content)
 }
 
 // identifyCMS identifica la tecnologia utilizzata analizzando l'HTML, le intestazioni e i cookie.
@@ -590,35 +641,139 @@ func identifyCMS(html string, headers http.Header, cmsNames map[string][]string)
 
 // dynamicAnalysis usa un browser headless per analizzare dinamicamente i contenuti generati.
 func dynamicAnalysis(url string, cmsNames map[string][]string) string {
-	browser := rod.New().MustConnect()
-	defer browser.MustClose()
+    browser := rod.New().MustConnect()
+    defer browser.MustClose()
 
-	page := browser.MustPage(url)
-	html := page.MustHTML()
+    page := browser.MustPage(url)
 
-	// Passa la mappa cmsNames a identifyCMS
-	return identifyCMS(html, nil, cmsNames)
+    // Configurazione per intercettare richieste
+    router := page.HijackRequests()
+    router.MustAdd("*", func(ctx *rod.Hijack) {
+        requestURL := ctx.Request.URL().String()
+        if strings.Contains(requestURL, "wp-json") {
+            ctx.Response.Fail(proto.NetworkErrorReasonBlockedByClient) // Blocca la richiesta se necessario
+        }
+    })
+    go router.Run()
+    defer router.Stop()
+
+    // Caricamento pagina
+    html := page.MustHTML()
+    headers := fetchHeaders(page)
+
+    // Analisi dinamica
+    detectedTech := identifyCMS(html, headers, cmsNames)
+    if detectedTech != "Altro" {
+        return detectedTech
+    }
+
+    return "Altro"
 }
 
+// Fetch Headers usando il browser headless
+func fetchHeaders(page *rod.Page) http.Header {
+	headers := make(http.Header)
+	response := page.MustEval(`() => { return JSON.stringify([...navigator]) }`).String()
+	// Converti JSON in Header
+	_ = json.Unmarshal([]byte(response), &headers)
+	return headers
+}
+
+func checkSiteAvailability(url string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "No", fmt.Errorf("errore: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return "Yes", nil
+	}
+
+	switch resp.StatusCode {
+	case 404:
+		return "No - 404 Not Found", nil
+	case 500:
+		return "No - 500 Internal Server Error", nil
+	default:
+		return fmt.Sprintf("No - Errore %d", resp.StatusCode), nil
+	}
+}
+
+func checkSiteMaintenance(html string) string {
+	// Parole chiave comuni per indicare manutenzione o costruzione
+	maintenanceKeywords := []string{
+		"in costruzione", "manutenzione", "under construction", "maintenance mode",
+		"work in progress", "coming soon", "site under maintenance", "temporarily unavailable",
+	}
+
+	// Cerca parole chiave nel contenuto HTML (corpo della pagina)
+	for _, keyword := range maintenanceKeywords {
+		if strings.Contains(strings.ToLower(html), keyword) {
+			return "Yes"
+		}
+	}
+
+	// Cerca nel tag <title>
+	re := regexp.MustCompile(`<title>(.*?)<\/title>`)
+	match := re.FindStringSubmatch(strings.ToLower(html))
+	if len(match) > 1 {
+		title := match[1]
+		for _, keyword := range maintenanceKeywords {
+			if strings.Contains(title, keyword) {
+				return "Yes"
+			}
+		}
+	}
+
+	// Verifica nel tag <meta> per metadati relativi alla manutenzione
+	metaTags := []string{
+		`<meta name="maintenance" content="true">`,
+		`<meta name="status" content="maintenance">`,
+	}
+
+	for _, meta := range metaTags {
+		if strings.Contains(strings.ToLower(html), meta) {
+			return "Yes"
+		}
+	}
+
+	// Cerca anche nel tag <body> per altre parole chiave
+	reBody := regexp.MustCompile(`<body.*?>(.*?)<\/body>`)
+	bodyMatch := reBody.FindStringSubmatch(html)
+	if len(bodyMatch) > 1 {
+		bodyContent := bodyMatch[1]
+		for _, keyword := range maintenanceKeywords {
+			if strings.Contains(strings.ToLower(bodyContent), keyword) {
+				return "Yes"
+			}
+		}
+	}
+
+	return "No"
+}
 
 func (e *Entry) CsvHeaders() []string {
-	return []string{
-		"Nome Attività",
-		"Categoria",
-		"Sito Web",
-		"Telefono",
-		"Indirizzo",
-		"Comune",
-		"Provincia",
-		"Email",
-		"Protocollo",
-		"Tecnologia",
-		"Cookie Banner",
-		"Hosting Provider",
-		"Performance Mobile",
-		"Performance Desktop",
-		"Punteggio SEO",
-	}
+    return []string{
+        "Nome Attività",
+        "Categoria",
+        "Sito Web",
+        "Telefono",
+        "Indirizzo",
+        "Comune",
+        "Provincia",
+        "Email",
+        "Protocollo",
+        "Tecnologia",
+        "Cookie Banner",
+        "Hosting Provider",
+        "Performance Mobile",
+        "Performance Desktop",
+        "Punteggio SEO",
+        "Disponibilità Sito",  // Nuovo campo
+        "Stato Manutenzione",  // Nuovo campo
+    }
 }
 
 // Funzione per creare la riga CSV con tutti i dettagli, incluso il provider di hosting
@@ -654,7 +809,9 @@ func (e *Entry) CsvRow(excludedWebsites map[string]struct{}) []string {
         hostingProvider,  // Aggiungi il nameserver
         e.MobilePerformance,
         e.DesktopPerformance,
-        e.SeoScore,  // Aggiungi il punteggio SEO
+        e.SeoScore,       // Aggiungi il punteggio SEO
+        e.SiteAvailability, // Disponibilità del sito
+        e.SiteMaintenance,  // Stato di manutenzione
     }
 }
 
@@ -739,7 +896,6 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile string) (Entry, error) {
 
     // Estrai i dati SEO solo se il sito web è valido
     if entry.WebSite != "" && entry.WebSite != "N/A" {
-        // Ora non eseguiamo più l'estrazione dei dati SEO
         if protocol, err := detectProtocol(entry.WebSite); err == nil {
             entry.Protocol = protocol
         }
@@ -759,6 +915,15 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile string) (Entry, error) {
             entry.DesktopPerformance = strconv.Itoa(desktopPerf)
             entry.SeoScore = strconv.FormatFloat(seoScore, 'f', 2, 64)
         }
+
+        // Check Disponibilità e Manutenzione
+        if availability, err := checkSiteAvailability(entry.WebSite); err == nil {
+            entry.SiteAvailability = availability
+        }
+
+        if html, _ := fetchHTML(entry.WebSite); html != "" {
+            entry.SiteMaintenance = checkSiteMaintenance(html)
+        }
     }
 
     return entry, nil
@@ -774,6 +939,26 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
 
     // Lista dei domini dei social media da escludere
     socialMediaDomains := []string{
+        "matrimonio.com",
+        "bricoman.it",
+        "tecnomat.it",
+        "apple.com",
+        "arcaplanet.it",
+        "canon.it",
+        "globo.it",
+        "burgerking.it",
+        "maisonsdumonde.com",
+        "kfc.it",
+        "hm.com",
+        "happycasa.com",
+        "sonnybono.com",
+        "levis.com",
+        "meltingpot.it",
+        "vikingop.it",
+        "dhl.com",
+        "gls-italy.com",
+        "ups.com",
+        "fedex.com",
         "miodottore.com",
         "instagram.com",
         "facebook.com",
@@ -824,13 +1009,205 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
         "zalando.it",
         "asos.com",
         "kayak.com",
+        "kayak.it",
         ".gov.it",
+        "sephora.it",
+        "douglas.it",
+        "yves-rocher",
+        "tigota.it",
+        "welinkbuilders.it",
+        "lidl",
+        "eurospin.it",
+        "despar.it",
+        "mdspa.it",
+        "aw-lab.com",
+        "footlocker.it",
+        "whatsapp.com",
+        "telegram.me",
+        "viber.com",
+        "shein.com",
+        "etsy.com",
+        "wish.com",
+        "ikea.com",
+        "leroymerlin.it",
+        "mediaworld.it",
+        "unieuro.it",
+        "trony.it",
+        "decathlon.it",
+        "decathlon.com",
+        "euronics.it",
+        "pullandbear.com",
+        "zalandoprive.it",
+        "stradivarius.com",
+        "mcdonalds.it",
+        "alcott.eu",
+        "mongolfieralecce.it",
+        "auchan.fr",
+        "intimissimi.com",
+        "bershka.com",
+        "zara.com",
+        "snai.it",
+        "bwin.it",
+        "starcasino.it",
+        "leovegas.it",
+        "betway.it",
+        "netflix.com",
+        "disneyplus.com",
+        "primevideo.com",
+        "spotify.com",
+        "expedia.com",
+        "lastminute.com",
+        "skyscanner.it",
+        "italo.it",
+        "ryanair.com",
+        "easyjet.com",
+        "inps.it",
+        "agenziaentrate.gov.it",
+        "anagrafe.it",
+        "ovs.it",
+        "coursera.org",
+        "chicco.com",
+        "casanovadesign.it",
+        "casaamica.it",
+        "buffetti.it",
+        "poste.it",
+        "lg.com",
+        "samsung.com",
+        "bartolini.it",
+        "fiat.it",
+        "lancia.it",
+        "spaziocasa.it",
+        "mango.com",
+        "volkswagen.it",
+        "bmw.it",
+        "audi.it",
+        "mercedes-benz.it",
+        "peugeot.it",
+        "renault.it",
+        "toyota.it",
+        "hyundai.it",
+        "nissan.it",
+        "kia.com",
+        "seat.it",
+        "skoda-auto.it",
+        "jeep.it",
+        "tesla.com",
+        "maserati.com",
+        "lamborghini.com",
+        "ferrari.com",
+        "dsautomobiles.it",
+        "uniqlo.com",
+        "gap.com",
+        "banana-republic.com",
+        "topshop.com",
+        "calvinklein.com",
+        "tommy.com",
+        "diesel.com",
+        "northface.com",
+        "timberland.it",
+        "rolex.com",
+        "napapijri.com",
+        "lacoste.com",
+        "poliziadistato.it",
+        "carabinieri.it",
+        "visitlecce.eu",
+        "aldi.it",
+        "penny.it",
+        "tigerstores.it",
+        "cooponline.it",
+        "esselunga.it",
+        "asus.com",
+        "lenovo.com",
+        "acer.com",
+        "dell.com",
+        "hp.com",
+        "nike.com",
+        "adidas.com",
+        "underarmour.com",
+        "reebok.com",
+        "patagonia.com",
+        "alitalia.com",
+        "trenitalia.com",
+        "volagratis.com",
+        "blablacar.it",
+        "flixbus.it",
+        "c-and-a.com",
+        "promod.com",
+        "guess.com",
+        "mangooutlet.com",
+        "citroen.it",
+        "opel.it",
+        "volvo.it",
+        "subaru.it",
+        "mitsubishi-motors.it",
+        "xiaomi.com",
+        "oppo.com",
+        "huawei.com",
+        "nokia.com",
+        "tnt.com",
+        "hermes.com",
+        "brt.it",
+        "social.quandoo.com",
+        "coin.it",
+        "calzedonia.com",
+        "tezenis.com",
+        "benetton.com",
+        "oysho.com",
+        "desigual.com",
+        "todis.it",
+        "carrefour.it",
+        "iper.it",
+        "supermedia.it",
+        "msi.it",
+        "razer.com",
+        "corsair.com",
+        "logitech.com",
+        "vodafone.it",
+        "tim.it",
+        "windtre.it",
+        "fastweb.it",
+        "autogrill.it",
+        "granarolo.it",
+        "barilla.com",
+        "mulino.it",
+        "ministerosalute.it",
+        "acquedotti.it",
+        "poltronesofa.com",
+        "mediatek.com",
+        "qualcomm.com",
+        "intel.com",
+        "amd.com",
+        "nvidia.com",
+        "fendi.com",
+        "balenciaga.com",
+        "versace.com",
+        "saintlaurent.com",
+        "burberry.com",
+        "hermes.com",
+        "cartier.com",
+        "chanel.com",
+        "fisioterapisti.org",
+        "farmacoecura.it",
+        "humanitas.it",
+        "santagostino.it",
+        "ducati.com",
+        "piaggio.com",
+        "iveco.com",
+        "bancaintesa.it",
+        "unicreditgroup.eu",
+        "findomestic.it",
+        "fineco.it",
+        "n26.com",
+        "justeat.it",
+        "glovoapp.com",
+        "deliveroo.it",
+        "ubereats.com",
     }
 
     // Controlla se il dominio contiene uno dei social media
     for _, smDomain := range socialMediaDomains {
         if strings.Contains(domain, smDomain) {
-            fmt.Printf("Sito escluso (social media): %s\n", url)
+            fmt.Printf("Sito escluso: %s\n", url)
             return true // Se il dominio è tra quelli esclusi, restituisci true
         }
     }

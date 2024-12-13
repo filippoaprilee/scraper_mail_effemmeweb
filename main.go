@@ -602,6 +602,7 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
     err = csvWriter.Write([]string{
         "Nome Attività", "Categoria", "Sito Web", "Telefono", "Indirizzo", "Comune", "Provincia", "Email",
         "Protocollo", "Tecnologia", "Cookie Banner", "Hosting Provider", "Mobile Performance", "Desktop Performance", "Punteggio SEO",
+        "Disponibilità Sito", "Stato Manutenzione", // Aggiunte nuove colonne
     })
     if err != nil {
         return "", fmt.Errorf("errore durante la scrittura dell'intestazione nel file CSV: %v", err)
@@ -799,6 +800,8 @@ func generateSQLFromCSV(ctx context.Context, csvFilePath string, category string
 		"EFFEMMEWEB_MOBILE_PERFORMANCE", // Aggiunta Mobile Performance
 		"EFFEMMEWEB_DESKTOP_PERFORMANCE", // Aggiunta Desktop Performance
 		"EFFEMMEWEB_SEO_SCORE", // Aggiunta Seo Score
+        "EFFEMMEWEB_DISPONIBILITA_SITO",
+        "EFFEMMEWEB_STATO_MANUTENZIONE",
 	}
 
 	// Usa la categoria passata come parametro
@@ -1262,6 +1265,8 @@ func generateSQL(csvFilePath, outputSQLPath, tableName string, columns []string,
         mobilePerformance := "" // Aggiungi qui il valore per "mobilePerformance"
         desktopPerformance := "" // Aggiungi qui il valore per "desktopPerformance"
         seoScore := "" // Aggiungi qui il valore per "seoScore"
+        siteAvailability := "" // Valore di disponibilità del sito
+        siteMaintenance := ""  // Valore di stato manutenzione
 
         // Aggiungi le colonne solo se ci sono valori
         if protocol != "" {
@@ -1284,6 +1289,12 @@ func generateSQL(csvFilePath, outputSQLPath, tableName string, columns []string,
         }
         if seoScore != "" {
             cleanedRow = append(cleanedRow, fmt.Sprintf("''%s''", seoScore))
+        }
+        if siteAvailability != "" {
+            cleanedRow = append(cleanedRow, fmt.Sprintf("''%s''", siteAvailability))
+        }
+        if siteMaintenance != "" {
+            cleanedRow = append(cleanedRow, fmt.Sprintf("''%s''", siteMaintenance))
         }
 
         rows = append(rows, cleanedRow)
@@ -1426,16 +1437,18 @@ func (cw *customCsvWriter) WriteResult(result scrapemate.Result) error {
         entry.Email,
         entry.Protocol,
         entry.Technology,
-        entry.CookieBanner, // Aggiungi Cookie Banner
-		entry.HostingProvider,
-		entry.MobilePerformance,  // Converti in stringa
-		entry.DesktopPerformance, // Converti in stringa
-		entry.SeoScore,  // Aggiungi il punteggio SEO
+        entry.CookieBanner, 
+        entry.HostingProvider,
+        entry.MobilePerformance,
+        entry.DesktopPerformance,
+        entry.SeoScore,
+        entry.SiteAvailability, // Nuovo campo
+        entry.SiteMaintenance,  // Nuovo campo
     }
 
 
     // Convalida il numero di campi rispetto all'intestazione
-    expectedFields := 15 // Aggiornato per includere Desktop Performance
+    expectedFields := 17 // Aggiornato per includere Desktop Performance
     if len(record) != expectedFields {
         fmt.Printf("Riga scartata (numero di campi errato): %v\n", record)
         return nil
