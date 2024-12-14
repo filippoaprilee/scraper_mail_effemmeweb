@@ -103,28 +103,6 @@ func loadExcludedWebsites(filename string) (map[string]struct{}, error) {
     return excluded, nil
 }
 
-func loadExcludedDNS(filename string) (map[string]struct{}, error) {
-    excluded := make(map[string]struct{})
-    file, err := os.Open(filename)
-    if err != nil {
-        return nil, fmt.Errorf("errore nell'aprire il file %s: %v", filename, err)
-    }
-    defer file.Close()
-
-    var data struct {
-        ExcludedDNS []string `json:"excluded_dns"`
-    }
-    decoder := json.NewDecoder(file)
-    if err := decoder.Decode(&data); err != nil {
-        return nil, fmt.Errorf("errore nella decodifica del file JSON %s: %v", filename, err)
-    }
-
-    for _, dns := range data.ExcludedDNS {
-        excluded[dns] = struct{}{}
-    }
-    return excluded, nil
-}
-
 // Funzione per ottenere i punteggi SEO, Mobile e Desktop
 func getPageSpeedScores(url string) (int, int, float64, error) {
     apiKey := "AIzaSyD13bhKEEwzY15yMgsolkVvMCuToZsHPlU" // Inserisci la tua API Key qui
