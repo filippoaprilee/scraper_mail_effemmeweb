@@ -562,32 +562,27 @@ func detectCookieBanner(url string) (string, error) {
 
 // detectProtocol verifica se l'URL usa HTTP o HTTPS, controllando prima l'HTTP e poi l'HTTPS.
 func detectProtocol(url string) (string, error) {
-    // Se l'URL inizia con https://, usa direttamente https
     if strings.HasPrefix(url, "https://") {
         return "https", nil
     } else if strings.HasPrefix(url, "http://") {
-        // Se l'URL inizia con http://, controlla se https:// è disponibile
-        httpsURL := strings.Replace(url, "http://", "https://", 1)
-        resp, err := http.Get(httpsURL)
-        if err != nil || resp.StatusCode != http.StatusOK {
-            return "http", nil // Se HTTPS non è disponibile, usa HTTP
-        }
-        return "https", nil // Se HTTPS è disponibile, usa HTTPS
-    }
-
-    // Se l'URL non contiene nessuno dei due protocolli, prova prima con HTTPS, poi con HTTP
-    httpsURL := "https://" + url
-    resp, err := http.Get(httpsURL)
-    if err != nil || resp.StatusCode != http.StatusOK {
-        // Se HTTPS non è disponibile, prova con HTTP
-        httpURL := "http://" + url
-        resp, err = http.Get(httpURL)
-        if err != nil || resp.StatusCode != http.StatusOK {
-            return "", fmt.Errorf("protocollo non rilevato per URL: %s", url)
-        }
         return "http", nil
     }
-    return "https", nil // Se HTTPS è disponibile, usa HTTPS
+
+    // Prova HTTPS per primo
+    httpsURL := "https://" + strings.TrimPrefix(url, "http://")
+    resp, err := http.Get(httpsURL)
+    if err == nil && resp.StatusCode == http.StatusOK {
+        return "https", nil
+    }
+
+    // Se HTTPS fallisce, prova HTTP
+    httpURL := "http://" + strings.TrimPrefix(url, "https://")
+    resp, err = http.Get(httpURL)
+    if err == nil && resp.StatusCode == http.StatusOK {
+        return "http", nil
+    }
+
+    return "", fmt.Errorf("protocollo non rilevato per URL: %s", url)
 }
 
 // detectTechnology analizza la tecnologia usata da un sito web, combinando analisi statica e dinamica.
@@ -739,11 +734,13 @@ func fetchHeaders(page *rod.Page) http.Header {
 }
 
 func checkSiteAvailability(url string) (string, error) {
-    maxRetries := 3             // Numero massimo di tentativi
-    retryDelay := 5 * time.Second // Ritardo tra un tentativo e l'altro
-    timeout := 15 * time.Second   // Timeout per ogni richiesta
+    maxRetries := 5             // Numero massimo di tentativi
+    initialRetryDelay := 5 * time.Second // Ritardo iniziale tra i tentativi
+    maxRetryDelay := 30 * time.Second    // Ritardo massimo tra i tentativi
+    timeout := 30 * time.Second          // Timeout per ogni richiesta
 
     var lastError error
+    retryDelay := initialRetryDelay
 
     for attempt := 1; attempt <= maxRetries; attempt++ {
         client := &http.Client{
@@ -763,49 +760,39 @@ func checkSiteAvailability(url string) (string, error) {
             } else {
                 lastError = fmt.Errorf("tentativo %d: Errore di connessione: %v", attempt, err)
             }
-            time.Sleep(retryDelay)
-            continue
-        }
-        defer resp.Body.Close()
+        } else {
+            defer resp.Body.Close()
 
-        // Gestione dei codici di stato specifici
-        switch resp.StatusCode {
-        case http.StatusOK: // 200
-            return "Sì - Disponibile (200 OK)", nil
-        case http.StatusNonAuthoritativeInfo: // 203
-            return "Sì - Informazioni Non Autorevoli (203)", nil
-        case http.StatusUnauthorized: // 401
-            return "No - Non Autorizzato (401)", nil
-        case http.StatusNotFound: // 404
-            return "No - Pagina Non Trovata (404)", nil
-        case http.StatusSeeOther: // 303
-            return "Sì - Vedi Altro (303)", nil
-        case http.StatusNoContent: // 204
-            return "Sì - Nessun Contenuto (204)", nil
-        case http.StatusInternalServerError: // 500
-            return "No - Errore Interno del Server (500)", nil
-        case http.StatusMovedPermanently: // 301
-            return "Sì - Spostato Permanentemente (301)", nil
-        case http.StatusBadRequest: // 400
-            return "No - Richiesta Errata (400)", nil
-        case http.StatusForbidden: // 403
-            return "No - Accesso Negato (403)", nil
-        case http.StatusNotImplemented: // 501
-            return "No - Funzionalità Non Implementata (501)", nil
-        case http.StatusBadGateway: // 502
-            return "No - Gateway Non Valido (502)", nil
-        default:
-            if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-                return fmt.Sprintf("No - Errore Client (%d)", resp.StatusCode), nil
-            } else if resp.StatusCode >= 500 {
-                return fmt.Sprintf("No - Errore Server (%d)", resp.StatusCode), nil
+            // Gestione dei codici di stato
+            switch resp.StatusCode {
+            case http.StatusOK: // 200
+                return "Sì - Disponibile (200 OK)", nil
+            case http.StatusServiceUnavailable: // 503
+                retryAfter := resp.Header.Get("Retry-After")
+                if seconds, err := strconv.Atoi(retryAfter); err == nil {
+                    time.Sleep(time.Duration(seconds) * time.Second)
+                }
+                lastError = fmt.Errorf("tentativo %d: Server Temporaneamente Non Disponibile (503)", attempt)
+            case http.StatusUnauthorized: // 401
+                return "No - Non Autorizzato (401)", nil
+            case http.StatusNotFound: // 404
+                return "No - Pagina Non Trovata (404)", nil
+            default:
+                if resp.StatusCode >= 500 {
+                    lastError = fmt.Errorf("tentativo %d: Errore Server (%d)", attempt, resp.StatusCode)
+                }
             }
         }
 
-        return "No - Stato Non Riconosciuto", nil
+        // Incrementa l'attesa con backoff progressivo
+        time.Sleep(retryDelay)
+        retryDelay = time.Duration(float64(retryDelay) * 1.5) // Aumenta progressivamente
+        if retryDelay > maxRetryDelay {
+            retryDelay = maxRetryDelay
+        }
     }
 
-    // Se tutti i tentativi falliscono, restituisci l'ultimo errore
+    // Se tutti i tentativi falliscono
     if lastError != nil {
         return "No - Errore dopo vari tentativi", lastError
     }

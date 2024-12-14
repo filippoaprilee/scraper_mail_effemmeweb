@@ -49,7 +49,10 @@
     "Umbraco": ["umbraco", "umbraco.com",  "umbraco-cloud"],
     "React": ["react", "react-dom", "reactjs"],
     "Vue": ["vuejs", "vue-loader"],
-    "Angular": ["angular", "ng-app", "ng-controller"],
+    "Angular": ["angular", "ng-app", "ng-controller", "angularjs"],
+    "PHP": ["php", "x-powered-by: php", "phpinfo"],
+    "ASP.NET": ["asp.net", "x-aspnet-version", ".aspx"],
+    "ASP.NET Core": ["asp.net core", "x-powered-by: asp.net core", "blazor"],
     "Django": ["django", "Django"],
     "Laravel": ["laravel", "laravel.com"],
     "Express": ["expressjs"],
@@ -65,5 +68,13 @@
     "Svelte": ["svelte", "svelte.dev"],
     "Alpine.js": ["alpinejs", "alpine"],
     "Backbone.js": ["backbone.js", "backbone"],
-    "Ember.js": ["ember.js", "emberjs"]
+    "Ember.js": ["ember.js", "emberjs"],
+    "Canva Websites": ["canva", "canva.com"],
+    "Google Sites": ["google.com/sites", "googlesites"],
+    "Nicepage": ["nicepage", "nicepage.com"],
+    "Basekit": ["basekit", "basekit.com"],
+    "Mobirise": ["mobirise", "mobirisesite.com"],
+    "Odoo": ["odoo", "odoo.com"],
+    "Webflow": ["webflow", "webflow.io"],
+    "Site123": ["site123", "site123.me"]
 }
