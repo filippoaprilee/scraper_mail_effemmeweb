@@ -13,6 +13,7 @@ import (
 	"net"
 	"strconv"
 	"os"
+    "bufio"
 
 	
 	"github.com/go-rod/rod"
@@ -89,16 +90,13 @@ func loadExcludedWebsites(filename string) (map[string]struct{}, error) {
     }
     defer file.Close()
 
-    var data struct {
-        ExcludedWebsites []string `json:"excluded_websites"`
-    }
-    decoder := json.NewDecoder(file)
-    if err := decoder.Decode(&data); err != nil {
-        return nil, fmt.Errorf("errore nella decodifica del file JSON %s: %v", filename, err)
-    }
-
-    for _, domain := range data.ExcludedWebsites {
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+        domain := scanner.Text()
         excluded[domain] = struct{}{}
+    }
+    if err := scanner.Err(); err != nil {
+        return nil, fmt.Errorf("errore durante la lettura del file %s: %v", filename, err)
     }
     return excluded, nil
 }

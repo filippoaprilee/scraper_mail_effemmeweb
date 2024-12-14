@@ -2,6 +2,7 @@ package gmaps
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -11,7 +12,6 @@ import (
 
 type EmailExtractJob struct {
 	scrapemate.Job
-
 	Entry *Entry
 }
 
@@ -21,7 +21,7 @@ func NewEmailJob(parentID string, entry *Entry) *EmailExtractJob {
 		defaultMaxRetries = 0
 	)
 
-	job := EmailExtractJob{
+	return &EmailExtractJob{
 		Job: scrapemate.Job{
 			ParentID:   parentID,
 			Method:     "GET",
@@ -29,23 +29,17 @@ func NewEmailJob(parentID string, entry *Entry) *EmailExtractJob {
 			MaxRetries: defaultMaxRetries,
 			Priority:   defaultPrio,
 		},
+		Entry: entry,
 	}
-
-	job.Entry = entry
-
-	return &job
 }
 
 func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
-	defer func() {
-		resp.Document = nil
-		resp.Body = nil
-	}()
+	defer clearResponse(resp)
 
 	log := scrapemate.GetLoggerFromContext(ctx)
 	log.Info("Processing email job", "url", j.URL)
 
-	// if html fetch failed just return
+	// Se c'è stato un errore di fetch, termina
 	if resp.Error != nil {
 		return j.Entry, nil, nil
 	}
@@ -55,21 +49,8 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 		return j.Entry, nil, nil
 	}
 
-	// Extract and validate email
-	var email string
-	emails := docEmailExtractor(doc)
-	if len(emails) == 0 {
-		emails = regexEmailExtractor(resp.Body)
-	}
-
-	if len(emails) > 0 {
-		// Sanitize the email
-		sanitizedEmail := sanitizeEmail(emails[0])
-		if isValidEmail(sanitizedEmail) {
-			email = sanitizedEmail
-		}
-	}
-
+	// Estrai email
+	email := extractEmail(doc, resp.Body)
 	j.Entry.Email = email
 
 	return j.Entry, nil, nil
@@ -79,52 +60,72 @@ func (j *EmailExtractJob) ProcessOnFetchError() bool {
 	return true
 }
 
-func docEmailExtractor(doc *goquery.Document) []string {
-	seen := map[string]bool{}
-	var emails []string
-
-	doc.Find("a[href^='mailto:']").Each(func(_ int, s *goquery.Selection) {
-		mailto, exists := s.Attr("href")
-		if exists {
-			value := strings.TrimPrefix(mailto, "mailto:")
-			value = sanitizeEmail(value) // Sanitize the email
-			if isValidEmail(value) && !seen[value] {
-				emails = append(emails, value)
-				seen[value] = true
-			}
-		}
-	})
-
-	return emails
+// clearResponse elimina riferimenti inutili dalla risposta
+func clearResponse(resp *scrapemate.Response) {
+	resp.Document = nil
+	resp.Body = nil
 }
 
-func regexEmailExtractor(body []byte) []string {
-	seen := map[string]bool{}
-	var emails []string
+// extractEmail estrae e valida un'email da un documento HTML o dal body
+func extractEmail(doc *goquery.Document, body []byte) string {
+	// Tenta di estrarre email da `mailto:`
+	emails := findEmailsFromDoc(doc)
 
-	addresses := emailaddress.Find(body, false)
-	for _, address := range addresses {
-		email := address.String()
-		email = sanitizeEmail(email) // Sanitize the email
-		if isValidEmail(email) && !seen[email] {
-			emails = append(emails, email)
-			seen[email] = true
+	// Se non trovate, usa la regex sul body
+	if len(emails) == 0 {
+		emails = findEmailsFromBody(body)
+	}
+
+	// Ritorna la prima email valida
+	for _, email := range emails {
+		sanitized := sanitizeEmail(email)
+		if isValidEmail(sanitized) {
+			return sanitized
 		}
 	}
 
+	return ""
+}
+
+// findEmailsFromDoc estrae le email usando `mailto:`
+func findEmailsFromDoc(doc *goquery.Document) []string {
+	var emails []string
+	doc.Find("a[href^='mailto:']").Each(func(_ int, s *goquery.Selection) {
+		if mailto, exists := s.Attr("href"); exists {
+			email := strings.TrimPrefix(mailto, "mailto:")
+			emails = append(emails, email)
+		}
+	})
 	return emails
 }
 
+// findEmailsFromBody estrae email da testo grezzo usando regex o libreria
+func findEmailsFromBody(body []byte) []string {
+	var emails []string
+	addresses := emailaddress.Find(body, false)
+	for _, addr := range addresses {
+		emails = append(emails, addr.String())
+	}
+	return emails
+}
+
+// sanitizeEmail rimuove caratteri indesiderati
 func sanitizeEmail(email string) string {
-	// Remove unwanted characters like "%20"
 	return strings.ReplaceAll(email, "%20", "")
 }
 
+// isValidEmail valida un'email
 func isValidEmail(email string) bool {
 	if len(email) > 100 {
 		return false
 	}
-	// Check if the email is valid
 	_, err := emailaddress.Parse(strings.TrimSpace(email))
 	return err == nil
+}
+
+// Alternativa con regex (se si vuole eliminare la dipendenza da emailaddress)
+var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+
+func findEmailsWithRegex(body []byte) []string {
+	return emailRegex.FindAllString(string(body), -1)
 }

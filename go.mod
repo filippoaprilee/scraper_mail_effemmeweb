@@ -13,6 +13,7 @@ require (
 	github.com/gosom/scrapemate v0.8.2
 	github.com/mcnijman/go-emailaddress v1.1.1
 	github.com/playwright-community/playwright-go v0.4702.0
+	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
 )
 

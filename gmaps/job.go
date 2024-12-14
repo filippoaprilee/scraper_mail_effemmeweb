@@ -3,15 +3,40 @@ package gmaps
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
 	"github.com/gosom/scrapemate"
 	"github.com/playwright-community/playwright-go"
+	"github.com/sirupsen/logrus"
 )
+
+func init() {
+	// Crea un logger silenzioso
+	silentLogger := logrus.New()
+	silentLogger.SetOutput(io.Discard)
+
+	// Sovrascrivi il logger standard di logrus
+	logrus.SetOutput(io.Discard)
+	logrus.StandardLogger().ReplaceHooks(logrus.LevelHooks{})
+	logrus.SetFormatter(&logrus.TextFormatter{
+		DisableColors: true,
+		FullTimestamp: false,
+	})
+
+	// Disabilita completamente stderr
+	disableStdErr()
+}
+
+func disableStdErr() {
+	devNull, _ := os.Open(os.DevNull)
+	os.Stderr = devNull
+}
 
 type GmapJob struct {
 	scrapemate.Job
@@ -25,7 +50,7 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool) *Gm
 		id = uuid.New().String()
 	}
 
-	job := GmapJob{
+	return &GmapJob{
 		Job: scrapemate.Job{
 			ID:         id,
 			Method:     http.MethodGet,
@@ -38,8 +63,6 @@ func NewGmapJob(id, langCode, query string, maxDepth int, extractEmail bool) *Gm
 		MaxDepth:     maxDepth,
 		ExtractEmail: extractEmail,
 	}
-
-	return &job
 }
 
 func (j *GmapJob) UseInResults() bool {
@@ -47,20 +70,53 @@ func (j *GmapJob) UseInResults() bool {
 }
 
 func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
-	defer func() {
-		resp.Document = nil
-		resp.Body = nil
-	}()
+	defer cleanResponse(resp)
+
+	if resp.Error != nil {
+		return nil, nil, resp.Error
+	}
 
 	doc, ok := resp.Document.(*goquery.Document)
 	if !ok {
-		return nil, nil, fmt.Errorf("could not convert to goquery document")
+		return nil, nil, fmt.Errorf("failed to parse document")
 	}
 
+	return nil, j.extractJobsFromDocument(doc, resp.URL), nil
+}
+
+func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
+	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+	})
+	if err != nil {
+		return scrapemate.Response{Error: fmt.Errorf("navigation failed: %w", err)}
+	}
+
+	if err = clickRejectCookiesIfRequired(page); err != nil {
+		return scrapemate.Response{Error: fmt.Errorf("cookie rejection failed: %w", err)}
+	}
+
+	if _, err = scroll(ctx, page, j.MaxDepth); err != nil {
+		return scrapemate.Response{Error: fmt.Errorf("scrolling failed: %w", err)}
+	}
+
+	body, err := page.Content()
+	if err != nil {
+		return scrapemate.Response{Error: fmt.Errorf("content retrieval failed: %w", err)}
+	}
+
+	return scrapemate.Response{
+		URL:        pageResponse.URL(),
+		StatusCode: pageResponse.Status(),
+		Body:       []byte(body),
+	}
+}
+
+func (j *GmapJob) extractJobsFromDocument(doc *goquery.Document, baseURL string) []scrapemate.IJob {
 	var nextJobs []scrapemate.IJob
 
-	if strings.Contains(resp.URL, "/maps/place/") {
-		nextJobs = append(nextJobs, NewPlaceJob(j.ID, j.LangCode, resp.URL, j.ExtractEmail))
+	if strings.Contains(baseURL, "/maps/place/") {
+		nextJobs = append(nextJobs, NewPlaceJob(j.ID, j.LangCode, baseURL, j.ExtractEmail))
 	} else {
 		doc.Find(`div[role=feed] div[jsaction]>a`).Each(func(_ int, s *goquery.Selection) {
 			if href := s.AttrOr("href", ""); href != "" {
@@ -68,64 +124,14 @@ func (j *GmapJob) Process(ctx context.Context, resp *scrapemate.Response) (any, 
 			}
 		})
 	}
-
-	return nil, nextJobs, nil
+	return nextJobs
 }
 
-func (j *GmapJob) BrowserActions(ctx context.Context, page playwright.Page) scrapemate.Response {
-	var resp scrapemate.Response
-
-	pageResponse, err := page.Goto(j.GetFullURL(), playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-	})
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-
-	if err = clickRejectCookiesIfRequired(page); err != nil {
-		resp.Error = err
-		return resp
-	}
-
-	const defaultTimeout = 5000
-	err = page.WaitForURL(page.URL(), playwright.PageWaitForURLOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
-		Timeout:   playwright.Float(defaultTimeout),
-	})
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-
-	resp.URL = pageResponse.URL()
-	resp.StatusCode = pageResponse.Status()
-	resp.Headers = make(http.Header, len(pageResponse.Headers()))
-	for k, v := range pageResponse.Headers() {
-		resp.Headers.Add(k, v)
-	}
-
-	_, err = scroll(ctx, page, j.MaxDepth)
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-
-	body, err := page.Content()
-	if err != nil {
-		resp.Error = err
-		return resp
-	}
-
-	resp.Body = []byte(body)
-	return resp
-}
-
-// clickRejectCookiesIfRequired handles cookie consent dialogs
 func clickRejectCookiesIfRequired(page playwright.Page) error {
-	sel := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
+	selector := `form[action="https://consent.google.com/save"]:first-of-type button:first-of-type`
 	const timeout = 500
-	el, err := page.WaitForSelector(sel, playwright.PageWaitForSelectorOptions{
+
+	el, err := page.WaitForSelector(selector, playwright.PageWaitForSelectorOptions{
 		Timeout: playwright.Float(timeout),
 	})
 	if err != nil || el == nil {
@@ -134,27 +140,23 @@ func clickRejectCookiesIfRequired(page playwright.Page) error {
 	return el.Click()
 }
 
-// scroll handles scrolling on the page
 func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error) {
-	scrollSelector := `div[role='feed']`
-	expr := `async () => {
+	const scrollSelector = `div[role='feed']`
+	const scrollScript = `async () => {
 		const el = document.querySelector("` + scrollSelector + `");
+		if (!el) return null;
 		el.scrollTop = el.scrollHeight;
-		return new Promise((resolve) => {
-			setTimeout(() => resolve(el.scrollHeight), %d);
-		});
+		return el.scrollHeight;
 	}`
 
 	var currentScrollHeight int
 	waitTime := 100.0
-	cnt := 0
 	const maxWait = 2000
 
 	for i := 0; i < maxDepth; i++ {
-		cnt++
-		scrollHeight, err := page.Evaluate(fmt.Sprintf(expr, maxWait))
-		if err != nil {
-			return cnt, err
+		scrollHeight, err := page.Evaluate(scrollScript)
+		if err != nil || scrollHeight == nil {
+			return i, fmt.Errorf("scroll evaluation failed")
 		}
 
 		height, ok := scrollHeight.(int)
@@ -163,20 +165,17 @@ func scroll(ctx context.Context, page playwright.Page, maxDepth int) (int, error
 		}
 
 		currentScrollHeight = height
-		select {
-		case <-ctx.Done():
-			return currentScrollHeight, nil
-		default:
-			page.WaitForTimeout(waitTime)
-		}
-
+		page.WaitForTimeout(waitTime)
 		waitTime = minFloat(waitTime*1.5, maxWait)
 	}
-
-	return cnt, nil
+	return maxDepth, nil
 }
 
-// minFloat returns the minimum of two float64 values
+func cleanResponse(resp *scrapemate.Response) {
+	resp.Document = nil
+	resp.Body = nil
+}
+
 func minFloat(a, b float64) float64 {
 	if a < b {
 		return a
