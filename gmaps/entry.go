@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+    "net/url"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -247,6 +248,30 @@ func normalizeNameserver(nameserver string) string {
     }
 
     return nameserver
+}
+
+// Funzione per pulire l'URL, mantenendo solo il dominio principale
+func normalizeURL(rawURL string) (string, error) {
+	// Rimuovi spazi o caratteri non validi
+	rawURL = strings.TrimSpace(rawURL)
+
+	// Analizza l'URL
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("URL non valido: %v", err)
+	}
+
+	// Ottieni il dominio principale
+	host := parsedURL.Host
+	if host == "" {
+		// Se l'host è vuoto, prova a considerare l'intero URL come host
+		host = rawURL
+	}
+
+	// Rimuovi il prefisso "www." se presente
+	host = strings.TrimPrefix(host, "www.")
+
+	return host, nil
 }
 
 
@@ -805,6 +830,7 @@ func checkSiteMaintenance(html string) string {
 	maintenanceKeywords := []string{
 		"in costruzione", "manutenzione", "under construction", "maintenance mode",
 		"work in progress", "coming soon", "site under maintenance", "temporarily unavailable",
+        "site under construction",
 	}
 
 	// Cerca parole chiave nel contenuto HTML (corpo della pagina)
@@ -981,7 +1007,13 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile string) (Entry, error) {
     // Se il sito web non esiste, lascialo vuoto e gestisci gli altri campi di conseguenza
     entry.WebSite, err = getNthElementAndCast[string](darray, 7, 0)
     if err != nil || entry.WebSite == "" {
-        entry.WebSite = ""  // Lascia vuoto se il sito non esiste
+        entry.WebSite = "" // Lascia vuoto se il sito non esiste
+    } else {
+        // Normalizza l'URL per ottenere solo il dominio principale
+        entry.WebSite, err = normalizeURL(entry.WebSite)
+        if err != nil {
+            entry.WebSite = "" // Se l'URL non è valido, lo ignora
+        }
     }
 
     // Verifica se il sito web è escluso
@@ -1352,6 +1384,12 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
         "dailymotion.",
         "snapchat.",
         "tiktok.",
+        "wa.me",
+        "whatsapp.com",
+        "welinklegal.it",
+        "welinklegal.",
+        "it.iqos.",
+        "amicacard.",
         "twitter.",
         "pinterest.",
         "tumblr.",
@@ -3428,8 +3466,8 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
     }
 
     // Aggiungi il controllo per i domini che contengono la parola "comune" o "e-coop.it"
-    if strings.Contains(domain, "comune.") || strings.Contains(domain, "e-coop.it") {
-        fmt.Printf("Sito escluso (comune o e-coop.it): %s\n", url)
+    if strings.Contains(domain, "comune.") || strings.Contains(domain, "e-coop.it") || strings.Contains(domain, ".iqos.") || strings.Contains(domain, ".tecnocasa.") {
+        fmt.Printf("Sito escluso: %s\n", url)
         return true // Se il dominio contiene "comune" o "e-coop.it", escludi il sito
     }
 

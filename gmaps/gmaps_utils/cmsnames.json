@@ -69,7 +69,7 @@
     "Alpine.js": ["alpinejs", "alpine"],
     "Backbone.js": ["backbone.js", "backbone"],
     "Ember.js": ["ember.js", "emberjs"],
-    "Canva Websites": ["canva", "canva.com"],
+    "Canva Websites": ["canva.com"],
     "Google Sites": ["google.com/sites", "googlesites"],
     "Nicepage": ["nicepage", "nicepage.com"],
     "Basekit": ["basekit", "basekit.com"],
