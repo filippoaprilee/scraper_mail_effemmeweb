@@ -52,7 +52,7 @@ func (j *PlaceJob) Process(_ context.Context, resp *scrapemate.Response) (any, [
 		return nil, nil, fmt.Errorf("could not convert to []byte")
 	}
 
-	entry, err := EntryFromJSON(raw, "gmaps/gmaps_utils/cmsnames.json", "gmaps/gmaps_utils/excludewebsites.txt")
+	entry, err := EntryFromJSON(raw, "gmaps/gmaps_utils/cmsnames.json", "gmaps/gmaps_utils/excludewebsites.json")
 		if err != nil {
 		return nil, nil, err
 	}
