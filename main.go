@@ -223,12 +223,12 @@ func main() {
 
 	// Menu principale
 	for {
-        fmt.Println(color.New(color.FgGreen).Sprint("Cosa desideri fare?"))
-        fmt.Println("1. 🕵️‍♂️  Avvia lo scraping dei dati")
-        fmt.Println("2. 💾 Genera file SQL da un CSV esistente")
-        fmt.Println("3. 📧 Crea file email da un CSV esistente")
-        fmt.Println("4. 📤 Invia email utilizzando un file CSV esistente")
-        fmt.Println("5. ❌ Esci")
+        fmt.Println("\nSeleziona un'opzione dal menu:")
+        fmt.Println("1. 🕵️‍♂️ Avvia lo scraping per raccogliere dati da Google Maps (Richiede connessione Internet).")
+        fmt.Println("2. 💾 Converti un file CSV esistente in istruzioni SQL.")
+        fmt.Println("3. 📧 Genera un file email da un CSV.")
+        fmt.Println("4. 📤 Invia email utilizzando un file CSV.")
+        fmt.Println("5. ❌ Esci dall'applicazione.")
         fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-5): "))
 
         reader := bufio.NewReader(os.Stdin)
@@ -237,7 +237,7 @@ func main() {
 
         switch choice {
         case "1":
-            if confirmAction("Vuoi procedere con lo scraping?") {
+            if confirmAction("Confermi di voler avviare il processo di scraping? Inserisci 'y' per continuare o 'n' per annullare:") {
                 if err := runScrapingFlow(ctx, categories, &generatedCSV); err != nil {
                     fmt.Println(color.New(color.FgRed).Sprintf("Errore durante lo scraping: %v", err))
                 }
@@ -335,7 +335,17 @@ func confirmAction(message string) bool {
 }
 
 func runScrapingFlow(ctx context.Context, categories []string, generatedCSV *string) error {
-    startTime := time.Now()  // Inizia a tracciare il tempo
+    fmt.Println("\n📋 Ecco la lista delle categorie disponibili per lo scraping:")
+	for i, category := range categories {
+		fmt.Printf("   %d. %s\n", i+1, category)
+	}
+
+	if !confirmAction("Vuoi procedere con lo scraping per tutte queste categorie?") {
+		fmt.Println("Scraping annullato.")
+		return nil
+	}
+
+	startTime := time.Now()
     fmt.Println("Avvio dello scraping...")
 
     // Canale per raccogliere i file CSV generati da tutte le categorie
@@ -397,7 +407,7 @@ func processCSV(ctx context.Context, csvFile string, category string) error {
 
 	if askUser("Vuoi inviare le email dall'account configurato? (y/n): ") {
 		emailCSVPath := fmt.Sprintf("email_results/emails_to_send_Categoria_%s.csv", time.Now().Format("20060102_150405"))
-		logPath := "sendmaillog.csv"
+        logPath := "sendmaillog.csv" // Usa logPath al posto di Path
 		smtpConfig := map[string]string{
 			"server":   "mail.effemmeweb.it",
 			"port":     "465",
@@ -405,8 +415,8 @@ func processCSV(ctx context.Context, csvFile string, category string) error {
 			"password": "Ludovica2021",
 		}
 		if err := processEmails(ctx, emailCSVPath, logPath, smtpConfig); err != nil {
-			return fmt.Errorf("Errore durante l'invio delle email: %v", err)
-		}
+            fmt.Println("Errore durante l'invio delle email:", err)
+        }
 		fmt.Println("Email inviate con successo.")
 	}
 
@@ -639,7 +649,7 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
     filteredKeywords := filterKeywordsByCategory(keywords, category)
 
     // Creazione dei lavori di scraping per la categoria
-    keywordJobs, err := createKeywordJobs("en", filteredKeywords, "./comuni.csv", 10, true)
+    keywordJobs, err := createKeywordJobs("it", filteredKeywords, "./comuni.csv", 10, true)
     if err != nil {
         return "", fmt.Errorf("errore durante la creazione dei lavori di scraping per la categoria %s: %v", category, err)
     }
@@ -819,53 +829,6 @@ func generateSQLFromCSV(ctx context.Context, csvFilePath string, category string
 	fmt.Printf("File SQL generato con successo: %s\n", outputSQLPath)
 
 	return nil
-}
-
-func extractFirstKeyword(filePath string) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", fmt.Errorf("impossibile aprire il file: %v", err)
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	reader.Comma = ';'
-
-	headers, err := reader.Read()
-	if err != nil {
-		return "", fmt.Errorf("errore nella lettura dell'intestazione: %v", err)
-	}
-
-	columnIndex := -1
-	for i, col := range headers {
-		if strings.ToLower(strings.TrimSpace(col)) == "keyword" {
-			columnIndex = i
-			break
-		}
-	}
-
-	if columnIndex == -1 {
-		return "", fmt.Errorf("colonna 'keyword' non trovata")
-	}
-
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", fmt.Errorf("errore nella lettura del file CSV: %v", err)
-		}
-
-		if columnIndex < len(record) {
-			keyword := strings.TrimSpace(record[columnIndex])
-			if keyword != "" {
-				return keyword, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("nessuna keyword valida trovata")
 }
 
 func generateEmailsToSend(csvFilePath string, category string) error {
@@ -1384,6 +1347,18 @@ func (cw *customCsvWriter) WriteResult(result scrapemate.Result) error {
     if !ok {
         return fmt.Errorf("tipo di dato non valido per il risultato")
     }
+
+    // Verifica se tutti i campi sono vuoti
+    if entry.Title == "" && entry.Category == "" && entry.WebSite == "" && entry.Phone == "" &&
+        entry.Street == "" && entry.City == "" && entry.Province == "" && entry.Email == "" &&
+        entry.Protocol == "" && entry.Technology == "" && entry.CookieBanner == "" &&
+        entry.HostingProvider == "" && entry.MobilePerformance == "" &&
+        entry.DesktopPerformance == "" && entry.SeoScore == "" && entry.SiteAvailability == "" &&
+        entry.SiteMaintenance == "" {
+        fmt.Println("Riga completamente vuota rilevata. Ignorata.")
+        return nil // Non scrive la riga
+    }
+
 
     email := entry.Email
     phone := entry.Phone

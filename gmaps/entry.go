@@ -13,11 +13,10 @@ import (
 	"net"
 	"strconv"
 	"os"
-    "bufio"
-
 	
 	"github.com/go-rod/rod"
     "github.com/go-rod/rod/lib/proto"
+    "github.com/domainr/whois"
 )
 // "github.com/PuerkitoBio/goquery"
 // "github.com/domainr/whois"
@@ -83,23 +82,33 @@ func loadCmsNames(filename string) (map[string][]string, error) {
 }
 
 func loadExcludedWebsites(filename string) (map[string]struct{}, error) {
-    excluded := make(map[string]struct{})
+    // Struttura per il parsing del JSON
+    var data struct {
+        ExcludedDomains []string `json:"excluded_domains"`
+    }
+
+    // Apri il file JSON
     file, err := os.Open(filename)
     if err != nil {
         return nil, fmt.Errorf("errore nell'aprire il file %s: %v", filename, err)
     }
     defer file.Close()
 
-    scanner := bufio.NewScanner(file)
-    for scanner.Scan() {
-        domain := scanner.Text()
+    // Decodifica il file JSON
+    decoder := json.NewDecoder(file)
+    if err := decoder.Decode(&data); err != nil {
+        return nil, fmt.Errorf("errore nel parsing del file JSON: %v", err)
+    }
+
+    // Popola la mappa con i domini esclusi
+    excluded := make(map[string]struct{})
+    for _, domain := range data.ExcludedDomains {
         excluded[domain] = struct{}{}
     }
-    if err := scanner.Err(); err != nil {
-        return nil, fmt.Errorf("errore durante la lettura del file %s: %v", filename, err)
-    }
+
     return excluded, nil
 }
+
 
 // Funzione per ottenere i punteggi SEO, Mobile e Desktop
 func getPageSpeedScores(url string) (int, int, float64, error) {
@@ -193,62 +202,150 @@ func getPageSpeedScores(url string) (int, int, float64, error) {
     return mobilePerformance, desktopPerformance, seoScore, nil
 }
 
-// Funzione per ottenere il provider di hosting a partire dal dominio
-func getHostingProvider(domain string) (string, error) {
-    // Estrai il dominio dall'URL
+func loadProviderMapping(filename string) (map[string]string, error) {
+    file, err := os.Open(filename)
+    if err != nil {
+        return nil, fmt.Errorf("errore nell'aprire il file %s: %v", filename, err)
+    }
+    defer file.Close()
+
+    providerMapping := make(map[string]string)
+    decoder := json.NewDecoder(file)
+    if err := decoder.Decode(&providerMapping); err != nil {
+        return nil, fmt.Errorf("errore nella decodifica del file JSON %s: %v", filename, err)
+    }
+
+    return providerMapping, nil
+}
+
+// Usa WHOIS per ottenere informazioni sul dominio
+func getHostingProviderFromWhois(domain string) (string, error) {
+	req, err := whois.NewRequest(domain)
+	if err != nil {
+		return "Analisi non completata", fmt.Errorf("errore nella creazione della richiesta WHOIS: %v", err)
+	}
+
+	resp, err := whois.DefaultClient.Fetch(req)
+	if err != nil {
+		return "Analisi non completata", fmt.Errorf("errore durante la richiesta WHOIS: %v", err)
+	}
+
+	data := resp.String()
+
+	// Analizza i dati WHOIS per hosting comune
+	if strings.Contains(data, "Cloudflare") {
+		return "Cloudflare", nil
+	}
+	if strings.Contains(data, "Amazon") || strings.Contains(data, "AWS") {
+		return "Amazon Web Services", nil
+	}
+	if strings.Contains(data, "Google") {
+		return "Google Cloud", nil
+	}
+
+	// Cerca i nameserver
+	if strings.Contains(data, "nameserver") {
+		lines := strings.Split(data, "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(strings.ToLower(line), "nameserver") {
+				ns := strings.Fields(line)[1]
+				return fmt.Sprintf("Possibile provider da WHOIS: %s", ns), nil
+			}
+		}
+	}
+
+	return "Sconosciuto", nil
+}
+
+func getHostingProviderWithFile(domain, providerFile string) (string, error) {
     parsedDomain, err := estraiDominio(domain)
     if err != nil {
-        return "Sconosciuto", err
+        return "Sconosciuto", fmt.Errorf("errore durante l'estrazione del dominio: %v", err)
     }
 
-    // Prova a trovare i nameservers per il dominio
+    // Lookup dei nameserver
     nameservers, err := net.LookupNS(parsedDomain)
     if err != nil {
-        return "Sconosciuto", err
+        // Se il lookup fallisce, prova direttamente WHOIS
+        return getHostingProviderFromWhois(parsedDomain)
     }
 
-    // Se ci sono nameservers, prova a identificare l'hosting
     for _, ns := range nameservers {
-        hostingProvider := identificaHostingDaNameserver(ns.Host)
-        if hostingProvider != "Sconosciuto" {
+        normalizedNS := normalizeNameserver(ns.Host)
+        fmt.Printf("Normalized NS for %s: %s\n", domain, normalizedNS)
+
+        hostingProvider, err := identificaHostingDaNameserver(normalizedNS, providerFile)
+        if err == nil && hostingProvider != "Sconosciuto" {
+            fmt.Printf("Hosting provider found: %s for NS: %s\n", hostingProvider, normalizedNS)
             return hostingProvider, nil
         }
+    }
+
+    // Fallback a WHOIS se nessun nameserver corrisponde
+    return getHostingProviderFromWhois(parsedDomain)
+}
+
+func identificaHostingDaNameserver(nameserver, providerFile string) (string, error) {
+    providerMapping, err := loadProviderMapping(providerFile)
+    if err != nil {
+        return "Sconosciuto", fmt.Errorf("errore nel caricare la mappa dei provider: %v", err)
+    }
+
+    normalizedNS := normalizeNameserver(nameserver)
+
+    for key, provider := range providerMapping {
+        // Match diretto
+        if normalizedNS == key || strings.HasSuffix(normalizedNS, key) {
+            return provider, nil
+        }
+
+        // Pattern complessi
+        if strings.Contains(normalizedNS, key) {
+            return provider, nil
+        }
+    }
+
+    // Fallback a WHOIS
+    whoisProvider, whoisErr := getHostingProviderFromWhois(normalizedNS)
+    if whoisErr == nil && whoisProvider != "Sconosciuto" {
+        return whoisProvider, nil
     }
 
     return "Sconosciuto", nil
 }
 
+// Funzione per loggare nameserver sconosciuti per analisi futura
+func logUnknownNameserver(nameserver string) {
+    logFile := "unknown_nameservers.log"
+    file, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        fmt.Printf("Errore durante l'apertura del file di log: %v\n", err)
+        return
+    }
+    defer file.Close()
+
+    logMessage := fmt.Sprintf("Nameserver sconosciuto: %s\n", nameserver)
+    if _, err := file.WriteString(logMessage); err != nil {
+        fmt.Printf("Errore durante la scrittura nel file di log: %v\n", err)
+    }
+}
+
 // Funzione per normalizzare il nameserver (rimuovendo prefissi come "ns-cloud-")
 func normalizeNameserver(nameserver string) string {
-    // Rimuovi prefissi specifici da ns1 a ns100, dns1 a dns100, ns-cloud- e awsdns-
-    for i := 1; i <= 100; i++ {
-        prefixes := []string{
-            fmt.Sprintf("dns%d.", i),
-            fmt.Sprintf("ns%d.", i),
-            fmt.Sprintf("ns-cloud-%d.", i),
-            fmt.Sprintf("awsdns-%d.", i),
-        }
+    prefixes := []string{"ns", "dns", "ns-cloud", "awsdns"}
+    re := regexp.MustCompile(`^(` + strings.Join(prefixes, "|") + `)\d*[-.]?`)
+    nameserver = re.ReplaceAllString(nameserver, "")
 
-        for _, prefix := range prefixes {
-            if strings.HasPrefix(nameserver, prefix) {
-                nameserver = strings.TrimPrefix(nameserver, prefix)
-                break
-            }
-        }
-    }
-
-    // Rimuovi eventuali suffissi come `.com.`, `.net.`, o il carattere finale `.`
     nameserver = strings.TrimSuffix(nameserver, ".")
     if strings.Contains(nameserver, ".") {
         parts := strings.Split(nameserver, ".")
-        if len(parts) > 1 {
-            nameserver = strings.Join(parts[:len(parts)-1], ".")
+        if len(parts) > 2 {
+            nameserver = strings.Join(parts[len(parts)-2:], ".")
         }
     }
-
+    fmt.Printf("Normalized nameserver: %s\n", nameserver)
     return nameserver
 }
-
 
 // Funzione helper per estrarre il dominio dall'URL
 func estraiDominio(url string) (string, error) {
@@ -259,277 +356,12 @@ func estraiDominio(url string) (string, error) {
     parti := strings.Split(urlPulito, "/")
     dominio := parti[0]
 
-    // Rimuovi www. se presente
-    dominio = strings.TrimPrefix(dominio, "www.")
-
     // Aggiungi alcuni controlli di validità
     if dominio == "" {
         return "", fmt.Errorf("dominio non valido")
     }
 
     return dominio, nil
-}
-
-// Funzione di fallback per identificare l'hosting
-func identificaHostingDaNameserver(nameserver string) string {
-    providerMapping := map[string]string{
-    "iweblab.it": "iWebLab-Hosting",
-    "widhost.net": "WIDHost",
-    "register.it": "Register.it-Hosting",
-    "seeweb.it": "Seeweb",
-    "sideralia.it": "Sideralia-Hosting",
-    "technorail.com": "Aruba-Hosting-(Technorail)",
-    "keliweb.eu": "Keliweb",
-    "netsons.net": "Netsons", 
-    "netsons.com": "Netsons",
-    "ormag.info": "Ormag-Hosting",
-    "abdns.biz": "ABDns-Hosting",
-    "secureserver.net": "GoDaddy-Hosting",
-    "italianserverlocation.com": "Italian-Server-Location",
-    "wixdns.net": "Wix",
-    "googledomains.com": "Google-Cloud",
-    "siteground.net": "SiteGround",
-    "arubadns.cz": "Aruba-Hosting",
-    "dns.technorail.com": "Aruba-DNS",
-    "dns2.technorail.com": "Aruba-DNS",
-    "dns3.arubadns.net": "Aruba-DNS",
-    "dns4.arubadns.cz": "Aruba-DNS",
-    "cloudflare.com": "Cloudflare",
-    "websitehostingserver.com": "Website-Hosting-Server",
-    "jimdo.com": "Jimdo-Hosting",
-    "litespeedtech.com": "LiteSpeed-Technologies",
-    "digitalocean.com": "DigitalOcean",
-    "awsdns.com": "Amazon-Web-Services-(AWS)",
-    "azure.com": "Microsoft-Azure",
-    "linode.com": "Linode",
-    "vultr.com": "Vultr",
-    "cdn77.com": "CDN77",
-    "fastly.com": "Fastly-CDN",
-    "stackpath.com": "StackPath-CDN",
-    "keycdn.com": "KeyCDN",
-    "cloudfront.net": "Amazon-CloudFront",
-    "cloudflare.net": "Cloudflare-CDN",
-    "akamai.com": "Akamai-CDN",
-    "rackspace.com": "Rackspace",
-    "gcp.com": "Google-Cloud-Platform-(GCP)",
-    "gcloud.com": "Google-Cloud-Platform-(GCP)",
-    "cloud.google.com": "Google-Cloud",
-    "ovh.net": "OVH-Hosting",
-    "hetzner.com": "Hetzner-Online",
-    "bluehost.com": "BlueHost",
-    "dreamhost.com": "DreamHost",
-    "hostgator.com": "HostGator",
-    "1and1.com": "1&1-IONOS",
-    "namecheap.com": "Namecheap-Hosting",
-    "hostwinds.com": "Hostwinds",
-    "contabo.com": "Contabo-Hosting",
-    "digitaloceanspaces.com": "DigitalOcean-Spaces",
-    "rackcdn.com": "Rackspace-CDN",
-    "bitnami.com": "Bitnami-Hosting",
-    "opensrs.net": "OpenSRS-DNS",
-    "googleservletengine.com": "Google-Servlet-Engine",
-    "wordpress.com": "WordPress.com-DNS",
-    "dnssec.org": "DNSSEC",
-    "amazonses.com": "Amazon-Simple-Email-Service-(SES)",
-    "netsolhost.com": "Network-Solutions-Hosting",
-    "inmotionhosting.com": "InMotion-Hosting",
-    "liquidweb.com": "Liquid-Web-Hosting",
-    "kinsta.com": "Kinsta-WordPress-Hosting",
-    "pagely.com": "Pagely-WordPress-Hosting",
-    "cloudways.com": "Cloudways-Managed-Hosting",
-    "netlify.com": "Netlify-Web-Hosting",
-    "vercel.com": "Vercel-Cloud-Platform",
-    "heroku.com": "Heroku-Cloud-Platform",
-    "ibm.com": "IBM-Cloud",
-    "oracle.com": "Oracle-Cloud",
-    "softlayer.com": "IBM-SoftLayer",
-    "godaddy.net": "GoDaddy-DNS",
-    "cloudns.net": "CloudNS-DNS",
-    "dynectdns.com": "Dyn-DNS-(Oracle)",
-    "route53.com": "Amazon-Route-53-DNS",
-    "azureedge.net": "Microsoft-Azure-CDN",
-    "godaddy.gom": "Go-Daddy",
-    "azure-mobile.net": "Azure-Mobile-Services",
-    "azure-api.net": "Azure-API-Management",
-    "windowsazure.com": "Microsoft-Azure",
-    "zerigo.net": "Zerigo-DNS",
-    "netdna.com": "NetDNA-CDN",
-    "edgekey.net": "Akamai-EdgeKey",
-    "leaseweb.net": "LeaseWeb-Hosting",
-    "googlehosted.com": "Google-Hosted-Services",
-    "unifiedlayer.com": "Unified-Layer-Hosting",
-    "webhostingpad.com": "WebHostingPad",
-    "fatcow.com": "FatCow-Hosting",
-    "cyberdyne.cloud": "Cyberdyne-Cloud-Services",
-    "ionos.com": "IONOS-Hosting",
-    "hostpapa.com": "HostPapa",
-    "a2hosting.com": "A2-Hosting",
-    "greengeeks.com": "GreenGeeks-Hosting",
-    "wpengine.com": "WP-Engine",
-    "pressable.com": "Pressable-WordPress-Hosting",
-    "mediatemple.net": "Media-Temple",
-    "godaddy.cloud": "GoDaddy-Cloud",
-    "hostinger.com": "Hostinger",
-    "interserver.net": "InterServer",
-    "hostiso.com": "Host-ISO",
-    "equinix.com": "Equinix-Cloud",
-    "serverplan.com": "ServerPlan",
-    "aruba.cloud": "Aruba-Cloud",
-    "cdn.net": "Generic-CDN-Services",
-    "cloudhost.io": "Cloud-Host",
-    "servage.net": "Servage-Hosting",
-    "strato.de": "STRATO-Hosting",
-    "ionos.cloud": "IONOS-Cloud",
-    "datacenter.it": "Italian-Data-Center",
-    "clouditalia.com": "Cloud-Italia",
-    "webhost.it": "Web-Host-Italia",
-    "registerit.cloud": "Register.it-Cloud",
-    "servercloud.it": "Server-Cloud-Italia",
-    "cloudflare.workers.dev": "Cloudflare-Workers",
-    "render.com": "Render-Cloud-Platform",
-    "fly.io": "Fly.io-Deployment-Platform",
-    "railway.app": "Railway-App-Hosting",
-    "cyclic.sh": "Cyclic-Hosting",
-    "northflank.com": "Northflank-Cloud-Platform",
-    "supabase.com": "Supabase-Hosting",
-    "platform.sh": "Platform.sh-Cloud-Hosting",
-    "ns1.register.it": "Register.it-Hosting",
-    "ns2.register.it": "Register.it-Hosting",
-    "ns1.siteground.net": "SiteGround",
-    "ns2.siteground.net": "SiteGround",
-    "ns1.th.seeweb.it": "Seeweb",
-    "ns2.th.seeweb.it": "Seeweb",
-	"openprovider.com": "OpenProvider-DNS",
-	"server.it": "Server-IT", 
-	"supporthost.com": "SupportHost", 
-	"altervista.org": "Altervista", 
-	"host.it": "Host-Italia", 
-	"web.com": "Web.com", 
-	"vhosting.it": "VHosting", 
-	"shellrent.it": "ShellRent", 
-	"artera.com": "Artera", 
-	"hosting4agency.com": "Hosting4Agency", 
-	"tophost.it": "TopHost", 
-	"flamenetworks.com": "FlameNetworks", 
-	"webhosting.it": "WebHosting", 
-	"hostingsolutions.it": "HostingSolutions", 
-	"utixo.com": "Utixo", 
-    "hostingperte.it": "Hosting-Per-Te",
-    "misterdomain.eu": "Mister Domain",
-    "domaincontrol.com": "GoDaddy-DNS",
-    "cmshigh.com": "ServerPlan",
-    "sphostserver.com": "ServerPlan",
-    "dnsparking.com": "Hostinger",
-    "dondominio.com": "Don-Dominio",
-    "webempresa.eu": "Don-Dominio",
-    "mydnsdomains.com": "Tucows Domains",
-    "tol.it": "Aruba",
-    "vhosting-it.com": "VHosting",
-    "ui-dns.com": "1&1-IONOS",
-    "ui-dns.org": "1&1-IONOS",
-    "ui-dns.de": "1&1-IONOS",
-    "ui-dns.biz": "1&1-IONOS",
-    "aruba.it": "Aruba-Hosting",
-    "paginesi.it": "Pagine Sì",
-    "serverdomus.com": "SeeWeb",
-    "ns-551.awsdns-04.net": "Amazon Web Services",
-    "ns-1162.awsdns-17.org": "Amazon Web Services",
-    "ns-2001.awsdns-58.co.uk": "Amazon Web Services",
-    "ns-284.awsdns-35.com": "Amazon Web Services",
-    "awsdns.net": "Amazon Web Services",
-    "awsdns.org": "Amazon Web Services",
-    "awsdns.co.uk": "Amazon Web Services",
-    "incubatec.net": "Incubatec Hosting",
-    "qubus.it": "Qubus Hosting",
-    "edis.global": "Edis Global",
-    "it-service.bz.it": "InterNetX",
-    "dnsitalia.net": "Hetzner",
-    "hostcsi.com": "HostCSI",
-    "flamedns.host": "Seeweb",
-    "serverkeliweb.it": "Keliweb",
-    "dnshigh.com": "Serverplan",
-    "host-anycast.com": "Netsons",
-    "namecheaphosting.com": "Namecheap",
-    "infomaniak.com": "Infomaniak",
-    "dominiok.it": "Hostinger",
-    "altervista.com": "Altervista",
-    "limecloud.it": "LimeCloud",
-    "server24.eu": "Server24",
-    "omnibus.net": "OVH",
-    "pianetaitalia.com": "Pianeta Italia",
-    "one.com": "One.com-Hosting",
-    "fol.it": "Fol-it Hosting",
-    "ovhcloud.com": "OVH",
-    "ovh.it": "OVH",
-    "contabo.net": "Contabo",
-    "mvnet.com": "MVNet",
-    "mvnet.it": "MVNet",
-    "mvnet-dns.eu": "MVNet",
-    "interferenza.it": "Interferenza Hosting",
-    "interferenza.net": "Interferenza Hosting",
-    "easygreenhosting.it": "Easy Green Hosting",
-    "kreativmedia.ch": "KreativMedia Hosting",
-    "ricpic.com": "Provider con OVH",
-    "pop.it": "Provider con Aruba",
-    "isiline.it": "Isiline",
-    "webme.it": "WebMe",
-    "nexcess.net": "NexCess & LiquidWeb",
-    "myprivatehosting.biz": "ServerEasy",
-    "anycast.me": "OVH Anycast",
-    "hostnuoviclienti.com": "Keliweb & NuoviClienti",
-    "keliweb.it": "Keliweb",
-    "hostnuoviclienti.org": "Keliweb & NuoviClienti",
-    "hostnuoviclienti.net": "Keliweb & NuoviClienti",
-    "aziendeitalia.it": "Aziende Italia",
-    "aziendeitalia.com": "Aziende Italia",
-    "aziendeitalia.cz": "Aziende Italia",
-    "infinitynet.it": "Infinity Net",
-    "bookmyname.com": "Book My Name",
-    "momit.eu": "Momit",
-    "noamweb.eu": "NoamWeb",
-    "noamweb.net": "NoamWeb",
-    "sintenet.net": "Sinenet",
-    "seeoux.com": "Seeoux",
-    "utixo.eu": "Utixo",
-    "utixo.net": "Utixo",
-    "erweb.it": "ErWeb",
-    "serverlet.it": "Serverlet",
-    "serverlet.com": "Serverlet",
-    "ergonet-dns.it": "Ergonet",
-    "ergonet-dns.com": "Ergonet",
-    "levita-dns.it": "Levita",
-    "levita-dns.eu": "Levita",
-    "60gea.com": "60Gea (Enom)",
-    "welcomeitalia.it": "ViaNova",
-    "mvmnet.com": "MovieMent",
-    "mvmnet.it": "MovieMent",
-    "mvmnet-dns.eu": "MovieMent",
-    "gandi.net": "Gandi.Net",
-    "a.gandi.net": "Gandi.Net",
-    "b.gandi.net": "Gandi.Net",
-    "protone.dns.tiscali.it": "Tiscali",
-    "elettrone.dns.tiscali.it": "Tiscali",
-    "gidinet.it": "GiDiNet",
-    "gidinet.com": "GiDiNet",
-    "serverwl.it": "ServerWL",
-    "rockethosting.it": "Rocket Hosting",
-    "cloudonthecloud.com": "Cloud on The Cloud",
-    "fvscloud.it": "OVH",
-    "fvscloud.com": "OVH",
-    "kpnqwest.it": "Retelit",
-    "retelit.it": "Retelit",
-    "si-tek.it": "Si-Tek",
-    "si-tek.net": "Si-Tek",
-
-    }
-
-    for key, provider := range providerMapping {
-        if strings.Contains(nameserver, key) {
-            return provider
-        }
-    }
-
-    return "Sconosciuto"
 }
 
 // detectCookieBanner controlla la presenza della parola "Cookie Policy" nella pagina.
@@ -587,27 +419,33 @@ func detectProtocol(url string) (string, error) {
 
 // detectTechnology analizza la tecnologia usata da un sito web, combinando analisi statica e dinamica.
 func detectTechnology(url string, cmsNames map[string][]string) (string, error) {
-	// Analisi statica (HTML e intestazioni)
+	// Fase 1: Analisi statica (HTML e headers)
 	html, headers := fetchHTML(url)
-	tech := identifyCMS(html, headers, cmsNames) // Passa la mappa cmsNames
-	if tech != "" {
-		return tech, nil
+	detectedCMS := identifyCMS(html, headers, cmsNames)
+
+	// Raffina il rilevamento per casi speciali come ItaliaOnline
+	finalCMS := refineCMSDetection(detectedCMS, html, cmsNames)
+
+	// Se il CMS è stato rilevato in modo definitivo, restituiscilo
+	if finalCMS != "Altro" {
+		return finalCMS, nil
 	}
 
-	// Analisi dinamica (browser headless)
+	// Fase 2: Analisi dinamica (browser headless) come fallback
 	dynamicTech := dynamicAnalysis(url, cmsNames)
-	if dynamicTech != "" {
-		return dynamicTech, nil
+
+	// Se l'analisi dinamica fornisce un risultato, aggiorna finalCMS
+	if dynamicTech != "" && dynamicTech != "Altro" {
+		finalCMS = refineCMSDetection(dynamicTech, html, cmsNames)
 	}
 
-	return "Altro", nil
+	// Restituisci il risultato finale (se non rilevato, sarà "Altro")
+	return finalCMS, nil
 }
 
 // fetchHTML scarica il contenuto HTML di una pagina e le relative intestazioni HTTP.
 func fetchHTML(url string) (string, http.Header) {
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-	}
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		return "", nil
@@ -617,10 +455,13 @@ func fetchHTML(url string) (string, http.Header) {
 	body, _ := io.ReadAll(resp.Body)
 	headers := resp.Header
 
-	// Scarica risorse esterne menzionate
+	// Analizza script esterni per segnali tecnologici
 	externalScripts := extractScriptSources(string(body))
 	for _, scriptURL := range externalScripts {
-		go fetchResource(scriptURL) // Scarica asincronicamente
+		scriptContent := fetchResource(scriptURL)
+		if scriptContent != "" {
+			body = append(body, []byte(scriptContent)...) // Aggiungi il contenuto degli script all'analisi
+		}
 	}
 
 	return string(body), headers
@@ -632,65 +473,94 @@ func extractScriptSources(html string) []string {
 	re := regexp.MustCompile(`<script[^>]+src="([^"]+)"`)
 	matches := re.FindAllStringSubmatch(html, -1)
 	for _, match := range matches {
-		urls = append(urls, match[1])
+		url := match[1]
+		if strings.HasPrefix(url, "/") || strings.HasPrefix(url, "./") {
+			continue // Ignora percorsi relativi
+		}
+		urls = append(urls, url)
 	}
 	return urls
 }
 
 // Scarica una risorsa esterna
 func fetchResource(url string) string {
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return ""
 	}
 	defer resp.Body.Close()
-	content, _ := io.ReadAll(resp.Body)
-	return string(content)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }
 
 // identifyCMS identifica la tecnologia utilizzata analizzando l'HTML, le intestazioni e i cookie.
 func identifyCMS(html string, headers http.Header, cmsNames map[string][]string) string {
 	if html == "" && headers == nil {
-		return "Errore: HTML e intestazioni non disponibili"
+		return "Altro"
 	}
 
-	// Verifica nell'HTML
+	// 1. Controllo nell'HTML
 	for cms, patterns := range cmsNames {
 		for _, pattern := range patterns {
-			re := regexp.MustCompile(pattern)
+			re := regexp.MustCompile(`(?i)` + pattern) // Case insensitive
 			if re.MatchString(html) {
+				// Rilevamento specifico per ItaliaOnline
+				if cms == "ItaliaOnline" {
+					return "ItaliaOnline"
+				}
 				return cms
 			}
 		}
 	}
 
-	// Verifica negli header HTTP
+	// 2. Controllo negli header HTTP
 	if headers != nil {
-		headerPatterns := map[string]string{
-			"WordPress": "WordPress",
-			"Django":    "Django",
-			"ASP.NET":   "ASP.NET",
-			"Shopify":   "Shopify",
-			"Magento":   "Magento",
-			"Joomla":    "Joomla",
-		}
-		for cms, pattern := range headerPatterns {
-			if strings.Contains(headers.Get("Server"), pattern) || strings.Contains(headers.Get("X-Powered-By"), pattern) {
-				return cms
+		for cms, patterns := range cmsNames {
+			for _, pattern := range patterns {
+				re := regexp.MustCompile(`(?i)` + pattern)
+				if re.MatchString(headers.Get("Server")) || re.MatchString(headers.Get("X-Powered-By")) {
+					return cms
+				}
 			}
 		}
 	}
 
-	// Verifica nei cookie
+	// 3. Controllo nei cookie
 	cookieHeader := headers.Get("Set-Cookie")
 	if cookieHeader != "" {
-		if strings.Contains(cookieHeader, "wordpress") {
-			return "WordPress"
+		for cms, patterns := range cmsNames {
+			for _, pattern := range patterns {
+				re := regexp.MustCompile(`(?i)` + pattern)
+				if re.MatchString(cookieHeader) {
+					return cms
+				}
+			}
 		}
 	}
 
-	// Se nessun CMS è stato trovato
+	// Nessun CMS rilevato
 	return "Altro"
+}
+
+func refineCMSDetection(detectedCMS string, html string, cmsNames map[string][]string) string {
+	if detectedCMS == "Duda" {
+		// Se rilevato "Duda", controlla ulteriormente se ci sono segnali di ItaliaOnline
+		iolPatterns, exists := cmsNames["ItaliaOnline"]
+		if exists {
+			for _, pattern := range iolPatterns {
+				re := regexp.MustCompile(`(?i)` + pattern)
+				if re.MatchString(html) {
+					return "ItaliaOnline"
+				}
+			}
+		}
+	}
+	return detectedCMS
 }
 
 // dynamicAnalysis usa un browser headless per analizzare dinamicamente i contenuti generati.
@@ -727,17 +597,22 @@ func dynamicAnalysis(url string, cmsNames map[string][]string) string {
 // Fetch Headers usando il browser headless
 func fetchHeaders(page *rod.Page) http.Header {
 	headers := make(http.Header)
-	response := page.MustEval(`() => { return JSON.stringify([...navigator]) }`).String()
+	response := page.MustEval(`() => {
+        return JSON.stringify({
+            userAgent: navigator.userAgent,
+            platform: navigator.platform
+        });
+    }`).String()
 	// Converti JSON in Header
 	_ = json.Unmarshal([]byte(response), &headers)
 	return headers
 }
 
 func checkSiteAvailability(url string) (string, error) {
-    maxRetries := 5             // Numero massimo di tentativi
-    initialRetryDelay := 5 * time.Second // Ritardo iniziale tra i tentativi
-    maxRetryDelay := 30 * time.Second    // Ritardo massimo tra i tentativi
-    timeout := 30 * time.Second          // Timeout per ogni richiesta
+    maxRetries := 5                        // Numero massimo di tentativi
+    initialRetryDelay := 5 * time.Second   // Ritardo iniziale tra i tentativi
+    maxRetryDelay := 30 * time.Second      // Ritardo massimo tra i tentativi
+    timeout := 45 * time.Second            // Timeout per ogni richiesta (aumentato)
 
     var lastError error
     retryDelay := initialRetryDelay
@@ -747,7 +622,7 @@ func checkSiteAvailability(url string) (string, error) {
             Timeout: timeout,
             CheckRedirect: func(req *http.Request, via []*http.Request) error {
                 if len(via) >= 5 {
-                    return http.ErrUseLastResponse
+                    return http.ErrUseLastResponse // Limita i redirect
                 }
                 return nil
             },
@@ -766,7 +641,14 @@ func checkSiteAvailability(url string) (string, error) {
             // Gestione dei codici di stato
             switch resp.StatusCode {
             case http.StatusOK: // 200
-                return "Sì - Disponibile (200 OK)", nil
+                return "Sì", nil
+            case http.StatusMovedPermanently, http.StatusFound: // 301, 302
+                // Segui i redirect solo se possibile
+                redirectURL := resp.Header.Get("Location")
+                if redirectURL != "" {
+                    url = redirectURL
+                    continue
+                }
             case http.StatusServiceUnavailable: // 503
                 retryAfter := resp.Header.Get("Retry-After")
                 if seconds, err := strconv.Atoi(retryAfter); err == nil {
@@ -790,6 +672,13 @@ func checkSiteAvailability(url string) (string, error) {
         if retryDelay > maxRetryDelay {
             retryDelay = maxRetryDelay
         }
+    }
+
+    // Verifica finale per ridurre i falsi negativi
+    finalClient := &http.Client{Timeout: 60 * time.Second} // Timeout più lungo per la verifica finale
+    finalResp, finalErr := finalClient.Get(url)
+    if finalErr == nil && finalResp.StatusCode == http.StatusOK {
+        return "Sì - Disponibile (Verificato)", nil
     }
 
     // Se tutti i tentativi falliscono
@@ -864,7 +753,15 @@ func (e *Entry) CsvHeaders() []string {
 }
 
 // Funzione per creare la riga CSV con tutti i dettagli, incluso il provider di hosting
-func (e *Entry) CsvRow(excludedWebsites map[string]struct{}) []string {
+func (e *Entry) CsvRow(excludedWebsites map[string]struct{}, providerFile string) []string {
+    // Controlla che almeno uno dei campi principali non sia vuoto
+    if e.Title == "" && e.WebSite == "" && e.Phone == "" && e.Email == "" && e.Street == "" && e.City == "" &&
+        e.Province == "" && e.Protocol == "" && e.Technology == "" && e.CookieBanner == "" && e.HostingProvider == "" &&
+        e.MobilePerformance == "" && e.DesktopPerformance == "" && e.SeoScore == "" && e.SiteAvailability == "" &&
+        e.SiteMaintenance == "" {
+        return nil // Se tutti i campi sono vuoti, non genera la riga
+    }
+    
     if e.Title == "" || e.Phone == "" {
         return nil
     }
@@ -876,11 +773,14 @@ func (e *Entry) CsvRow(excludedWebsites map[string]struct{}) []string {
     }
 
     // Aggiungi il provider di hosting solo se il dominio non è escluso
-    hostingProvider := e.HostingProvider
-    if dominio != "" {
-        hostingProvider, _ = getHostingProvider(dominio)  // Chiamata per ottenere il provider
-    }
-
+	hostingProvider := e.HostingProvider
+	if dominio != "" {
+		var err error
+		hostingProvider, err = getHostingProviderWithFile(dominio, providerFile) // Chiamata per ottenere il provider
+		if err != nil {
+			hostingProvider = "Sconosciuto"
+		}
+	}
     return []string{
         e.Title,
         e.Category,
@@ -929,8 +829,7 @@ func isSocialMediaDomain(domain string) bool {
     return false
 }
 
-// Funzione aggiornata per creare un Entry
-func EntryFromJSON(raw []byte, cmsFile, excludeFile string) (Entry, error) {
+func EntryFromJSON(raw []byte, cmsFile, excludeFile, providerFile string) (Entry, error) {
     var entry Entry
     defer func() {
         if r := recover(); r != nil {
@@ -981,7 +880,7 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile string) (Entry, error) {
     // Se il sito web non esiste, lascialo vuoto e gestisci gli altri campi di conseguenza
     entry.WebSite, err = getNthElementAndCast[string](darray, 7, 0)
     if err != nil || entry.WebSite == "" {
-        entry.WebSite = ""  // Lascia vuoto se il sito non esiste
+        entry.WebSite = "" // Lascia vuoto se il sito non esiste
     }
 
     // Verifica se il sito web è escluso
@@ -1008,20 +907,24 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile string) (Entry, error) {
     // Rimuovi "Province of" da State se presente
     entry.Province = strings.Replace(entry.Province, "Province of ", "", 1)
 
-    // Estrai i dati SEO solo se il sito web è valido
+    // Estrai i dati SEO e di hosting solo se il sito web è valido
     if entry.WebSite != "" && entry.WebSite != "N/A" {
         if protocol, err := detectProtocol(entry.WebSite); err == nil {
             entry.Protocol = protocol
         }
-        if technology, err := detectTechnology(entry.WebSite, cmsNames); err == nil {
+        if technology, err := detectTechnology(entry.WebSite, cmsNames); err == nil && technology != "" {
             entry.Technology = technology
-        }
+        } else {
+            entry.Technology = "Altro"
+        }    
         if cookieBanner, err := detectCookieBanner(entry.WebSite); err == nil {
             entry.CookieBanner = cookieBanner
         }
 
-        if hostingProvider, err := getHostingProvider(entry.WebSite); err == nil {
+        if hostingProvider, err := getHostingProviderWithFile(entry.WebSite, providerFile); err == nil {
             entry.HostingProvider = hostingProvider
+        } else {
+            entry.HostingProvider = "Sconosciuto"
         }
 
         if mobilePerf, desktopPerf, seoScore, err := getPageSpeedScores(entry.WebSite); err == nil {
@@ -1051,2417 +954,73 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
         return false // Se non riesce a estrarre il dominio, considera il sito non escluso
     }
 
-    // Lista dei domini dei social media da escludere
-    socialMediaDomains := []string{
-        "ikea.",
-        "mcdonalds.",
-        "apple.",
-        "coop.",
-        "conad.",
-        "esselunga.",
-        "lidl.",
-        "carrefour.",
-        "kfc.",
-        "burgerking.",
-        "subway.",
-        "starbucks.",
-        "zara.",
-        "nike.",
-        "adidas.",
-        "primark.",
-        "mondoconv.",
-        "kasanova.",
-        "maisonsdumonde.",
-        "euronics.",
-        "mediaworld.",
-        "decathlon.",
-        "leroymerlin.",
-        "zalando.",
-        "unieuro.",
-        "feltrinelli.",
-        "gamestop.",
-        "auchan.",
-        "despar.",
-        "pam.",
-        "eurospin.",
-        "selexgc.",
-        "iper.",
-        "bennet.",
-        "mdspa.",
-        "pennymarket.",
-        "tigros.",
-        "famila.",
-        "ilgigante.",
-        "aliper.",
-        "dok.",
-        "sisa.",
-        "todis.",
-        "simplymarket.",
-        "insmercato.",
-        "maxidi.",
-        "leroymerlin.",
-        "chanel.",
-        "gucci.",
-        "louisvuitton.",
-        "prada.",
-        "versace.",
-        "dior.",
-        "hermes.",
-        "balenciaga.",
-        "ferragamo.",
-        "burberry.",
-        "boss.",
-        "armani.",
-        "ralphlauren.",
-        "calvinklein.",
-        "tommyhilfiger.",
-        "hm.",
-        "uniqlo.",
-        "gap.",
-        "bershka.",
-        "stradivarius.",
-        "pullandbear.",
-        "mango.",
-        "shein.",
-        "northface.",
-        "patagonia.",
-        "columbia.",
-        "reebok.",
-        "puma.",
-        "underarmour.",
-        "newbalance.",
-        "converse.",
-        "vans.",
-        "admiral.",
-        "asics.",
-        "timberland.",
-        "decathlon.",
-        "spalding.",
-        "nike.",
-        "diesel.",
-        "levi.",
-        "wrangler.",
-        "lee.",
-        "dockers.",
-        "replayjeans.",
-        "pepejeans.",
-        "tommy.",
-        "zegna.",
-        "boss.",
-        "lacoste.",
-        "hogan.",
-        "tods.",
-        "valentino.",
-        "bulgari.",
-        "cartier.",
-        "piaget.",
-        "longines.",
-        "rolex.",
-        "tudorwatch.",
-        "omgega.",
-        "tagheuer.",
-        "hublot.",
-        "longines.",
-        "panerai.",
-        "jagerlecoultre.",
-        "vacheronconstantin.",
-        "audemarspiguet.",
-        "patek.",
-        "girard-perregaux.",
-        "zegna.",
-        "armani.",
-        "gucci.",
-        "versace.",
-        "michaelkors.",
-        "tiffany.",
-        "pandora.",
-        "swarovski.",
-        "bluespirit.",
-        "nava.",
-        "kitchenmarket.",
-        "alessiofurniture.",
-        "maisonsdumonde.",
-        "franke.",
-        "smeg.",
-        "whirlpool.",
-        "electrolux.",
-        "philips.",
-        "dyson.",
-        "rowenta.",
-        "polti.",
-        "kenwood.",
-        "bialetti.",
-        "delonghi.",
-        "krups.",
-        "espresso.",
-        "saeco.",
-        "nivona.",
-        "nespresso.",
-        "caffitaly.",
-        "illy.",
-        "lavazza.",
-        "kimbo.",
-        "bondi.",
-        "trony.",
-        "euronics.",
-        "expert.",
-        "mediamarket.",
-        "unieuro.",
-        "mymarket.",
-        "penny.",
-        "pamlocal.",
-        "desparlocal.",
-        "auchanlocal.",
-        "coinmarket.",
-        "cooplocal.",
-        "deltaairlines.",
-        "ryanair.",
-        "iberia.",
-        "vueling.",
-        "easyjet.",
-        "airfrance.",
-        "lufthansa.",
-        "swissair.",
-        "alitalia.",
-        "ita.",
-        "emirates.",
-        "etihad.",
-        "qatarairways.",
-        "aircanada.",
-        "delta.",
-        "americanairlines.",
-        "united.",
-        "britishairways.",
-        "koreanair.",
-        "thaiairways.",
-        "singaporeair.",
-        "malaysiaairlines.",
-        "cathaypacific.",
-        "hainan.",
-        "hongkongair.",
-        "ana.",
-        "jejuair.",
-        "virgin.",
-        "kidkaboose.",
-        "samsung.",
-        "lg.",
-        "sony.",
-        "panasonic.",
-        "sharp.",
-        "vizio.",
-        "hisense.",
-        "tcl.",
-        "spectrum.",
-        "xfinity.",
-        "directv.",
-        "dish.",
-        "netflix.",
-        "hulu.",
-        "amazon.",
-        "ebay.",
-        "aliexpress.",
-        "shopify.",
-        "etsy.",
-        "walmart.",
-        "target.",
-        "bestbuy.",
-        "homedepot.",
-        "lowes.",
-        "menards.",
-        "sears.",
-        "kohls.",
-        "macy.",
-        "nordstrom.",
-        "bloomingdales.",
-        "costco.",
-        "samsclub.",
-        "bjs.",
-        "guitarcenter.",
-        "music123.",
-        "sweetwater.",
-        "musiciansfriend.",
-        "reverb.",
-        "azmusic.",
-        "zsounds.",
-        "prosoundgear.",
-        "professormics.",
-        "audio-technica.",
-        "bose.",
-        "jbl.",
-        "sennheiser.",
-        "shure.",
-        "koss.",
-        "sony.",
-        "pioneer.",
-        "yamaha.",
-        "roland.",
-        "korg.",
-        "zoom.",
-        "mackie.",
-        "alesis.",
-        "behringer.",
-        "digidesign.",
-        "focusrite.",
-        "steinberg.",
-        "songkick.",
-        "livemusic.",
-        "concertpass.",
-        "ticketmaster.",
-        "stubhub.",
-        "seatgeek.",
-        "eventbrite.",
-        "axs.",
-        "ticketsnow.",
-        "viagogo.",
-        "tix.",
-        "tickpick.",
-        "vividseats.",
-        "livenation.",
-        "fandango.",
-        "flixster.",
-        "rottentomatoes.",
-        "metacritic.",
-        "imdb.",
-        "amctheatres.",
-        "regmovies.",
-        "cinemark.",
-        "cineplex.",
-        "showcasecinemas.",
-        "alamodrafthouse.",
-        "drafthouse.",
-        "harkins.",
-        "angelikafilmcenter.",
-        "landmarktheatres.",
-        "eastlandcinema.",
-        "cinema.",
-        "focusfeatures.",
-        "universalmovies.",
-        "paramountplus.",
-        "disneyplus.",
-        "hbo.",
-        "hulu.",
-        "showtime.",
-        "starz.",
-        "cinemax.",
-        "crackle.",
-        "tubi.",
-        "plutotv.",
-        "peacocktv.",
-        "youtube.",
-        "vimeo.",
-        "dailymotion.",
-        "snapchat.",
-        "tiktok.",
-        "wa.me",
-        "whatsapp.com",
-        "welinklegal.it",
-        "welinklegal.",
-        "it.iqos.",
-        "amicacard.",
-        "twitter.",
-        "pinterest.",
-        "tumblr.",
-        "reddit.",
-        "quora.",
-        "medium.",
-        "wordpress.",
-        "blogger.",
-        "wix.",
-        "squarespace.",
-        "weebly.",
-        "shopify.",
-        "bigcommerce.",
-        "magento.",
-        "woocommerce.",
-        "prestashop.",
-        "opencart.",
-        "volusion.",
-        "3dcart.",
-        "squareup.",
-        "paypal.",
-        "stripe.",
-        "worldpay.",
-        "adyen.",
-        "authorizenet.",
-        "skrill.",
-        "payoneer.",
-        "amazonpay.",
-        "googlepay.",
-        "applepay.",
-        "samsungpay.",
-        "cryptopayments.",
-        "coinbase.",
-        "binance.",
-        "kraken.",
-        "bitpay.",
-        "blockchain.",
-        "gemini.",
-        "poloniex.",
-        "bitstamp.",
-        "bithumb.",
-        "okx.",
-        "kucoin.",
-        "gate.",
-        "crypto.",
-        "luno.",
-        "bitfinex.",
-        "celsius.",
-        "nexo.",
-        "blockfi.",
-        "hodlhodl.",
-        "paxful.",
-        "localbitcoins.",
-        "cashapp.",
-        "venmo.",
-        "zellepay.",
-        "wise.",
-        "revolut.",
-        "monzo.",
-        "n26.",
-        "chime.",
-        "sofi.",
-        "varomoney.",
-        "ally.",
-        "capitalone.",
-        "discover.",
-        "americanexpress.",
-        "citibank.",
-        "wellsfargo.",
-        "jpmorganchase.",
-        "bankofamerica.",
-        "hsbc.",
-        "barclays.",
-        "santander.",
-        "unicredit.",
-        "intesasanpaolo.",
-        "bnpparibas.",
-        "societegenerale.",
-        "creditagricole.",
-        "deutschebank.",
-        "commerzbank.",
-        "abnamro.",
-        "rabobank.",
-        "ubs.",
-        "credit-suisse.",
-        "natwest.",
-        "lloydsbank.",
-        "standardchartered.",
-        "commonwealthbank.",
-        "westpac.",
-        "ocbc.",
-        "bankofchina.",
-        "icbc.",
-        "ccb.",
-        "agriculturebank.",
-        "bankofindia.",
-        "statebankofindia.",
-        "hdfcbank.",
-        "axisbank.",
-        "icicibank.",
-        "kotak.",
-        "idbibank.",
-        "punjabnationalbank.",
-        "bankofbaroda.",
-        "yesbank.",
-        "indusindbank.",
-        "unionbank.",
-        "canarabank.",
-        "centralbank.",
-        "dhanbank.",
-        "dentalpro.",
-        "sorrisiesalute.",
-        "dentix.",
-        "implantologiadentale.",
-        "dentistiitaliani.",
-        "mydentist.",
-        "studidentisticiitalia.",
-        "dentista.",
-        "dentalcoop.",
-        "dentaltree.",
-        "centrodentale.",
-        "centrodentisticiprimo.",
-        "axa.it",
-        "axa.",
-        "alleanza.",
-        "alleanza.it",
-        "belex.com",
-        "gop.it",
-        "belex.",
-        "gop.",
-        "pwc.",
-        "studiogazzani.",
-        "metodovics.",
-        "fiscocenter.",
-        "sviluppofranchising",
-        "retecommercialisti.",
-        "advisoritalia.",
-        "partnerdimpresa.",
-        "studiobarale.",
-        "networkandknowledge.",
-        "quadronetwork.",
-        "aprireinfranchising.",
-        "commercialista.",
-        "36commercialisti.",
-        "commercialisti.",
-        "ricerca.commercialisti.",
-        "retecommercialisti.",
-        "forbes.",
-        "infofranchising.",
-        "ilsole24ore.",
-        "sandental.",
-        "artedent.",
-        "orisdental.",
-        "ciromandelli.",
-        "smileclinic.",
-        "dentaleuropeo.",
-        "dentafutura.",
-        "centroodontoiatricofutura.",
-        "dentalone.",
-        "mirvisrl.",
-        "dentalgroupitalia.",
-        "studiodentisticogroup.",
-        "dentalnet.",
-        "dentalclinics.",
-        "dentalfamily.",
-        "dentalcity.",
-        "dentalitalia.",
-        "bioclinicitalia.",
-        "dentistapiu.",
-        "dentalhouseitalia.",
-        "dentalserviceitalia.",
-        "dentalspaitalia.",
-        "biomeditalia.",
-        "dentalitalgroup.",
-        "dentalclinicit.",
-        "dentistsrl.",
-        "sorridepiu.",
-        "dentart.",
-        "dentalmedic.",
-        "dentstudio.",
-        "sanitadental.",
-        "dentalgroupitalia.",
-        "dentalpoint.",
-        "grandvision.",
-        "salmoiraghievigano.",
-        "otticaveneta.",
-        "visionottica.",
-        "otticavistar.",
-        "occhialihouse.",
-        "occhialionline.",
-        "otticadentale.",
-        "otticaonline.",
-        "otticamoderna.",
-        "occhialidelsole.",
-        "otticalux.",
-        "otticacorrado.",
-        "otticapiu.",
-        "occhialland.",
-        "otticacentrovisione.",
-        "otticalounge.",
-        "otticapoint.",
-        "sunsightitalia.",
-        "luxottica.",
-        "ovsoptics.",
-        "lentispeciali.",
-        "occhiali4you.",
-        "occhialishop.",
-        "occhialarte.",
-        "ovisual.",
-        "specchionline.",
-        "vistaitalia.",
-        "otticafutura.",
-        "otticadelcorso.",
-        "vistafacile.",
-        "glamouroptics.",
-        "otticadigitale.",
-        "otticacentral.",
-        "otticadelcentro.",
-        "otticasole.",
-        "ginecologiapro.",
-        "centroginecologia.",
-        "studioginecologico.",
-        "ginecologialife.",
-        "femclinic.",
-        "ginecologiapiu.",
-        "centrodiagnosticoginecologico.",
-        "ladonnaesalute.",
-        "mediciginecologi.",
-        "progettoginecologia.",
-        "ginecologiadonna.",
-        "studiogin.",
-        "diagnosticaginecologica.",
-        "centroginecologiaprofessionale.",
-        "studiomedicoginecologico.",
-        "saluteginecologica.",
-        "ginecologialuce.",
-        "gineclinic.",
-        "ginecare.",
-        "ginemed.",
-        "medicinadonna.",
-        "clinicamaterna.",
-        "gineclinicpro.",
-        "medgyn.",
-        "profgynecology.",
-        "studiogynlife.",
-        "gynplus.",
-        "gynfamily.",
-        "centromaternal.",
-        "clinicaginelife.",
-        "istruzione.",
-        "miur.gov.",
-        "sedonline.",
-        "scuolaweb.",
-        "portaledellascuola.",
-        "scuoleitalia.",
-        "universitalia.",
-        "accademiadellearti.",
-        "institutodidattico.",
-        "campusitalia.",
-        "superiorieducation.",
-        "masterstudies.",
-        "liceitaliani.",
-        "istruzioneeformazione.",
-        "scuolaitaliana.",
-        "informazionescolastica.",
-        "studiuniversitari.",
-        "universitalian.",
-        "istruzionesuperiore.",
-        "miurscuole.",
-        "sistemaistruzione.",
-        "scuolapubblica.",
-        "accademieartistiche.",
-        "formazionetecnica.",
-        "corsieducativi.",
-        "studitalia.",
-        "insegnamentoitalia.",
-        "scolasticaonline.",
-        "sistemadidattico.",
-        "educazioneprofessionale.",
-        "centrodistudi.",
-        "studioitaliano.",
-        "scuoleonlines.",
-        "institutionsedu.",
-        "studioselearning.",
-        "scuoleformazione.",
-        "scuoladigital.",
-        "aslroma1.",
-        "aslroma2.",
-        "aslroma3.",
-        "aslroma4.",
-        "aslroma5.",
-        "aslroma6.",
-        "aslviterbo.",
-        "aslrieti.",
-        "asllatina.",
-        "aslfrosinone.",
-        "asltorino.",
-        "aslcuneo.",
-        "unes.",
-        "dentista.tv",
-        "aslbiella.",
-        "aslalessandria.",
-        "aslasti.",
-        "aslnovara.",
-        "aslvercelli.",
-        "aslverbania.",
-        "asltorino3.",
-        "aslto4.",
-        "aslto5.",
-        "aslcitta.",
-        "aslbergamo.",
-        "aslbrescia.",
-        "aslcomo.",
-        "aslcremona.",
-        "asllecco.",
-        "asllodi.",
-        "aslmantova.",
-        "aslmilano.",
-        "aslmonza.",
-        "aslpavia.",
-        "aslsondrio.",
-        "aslvarese.",
-        "aslvenezia.",
-        "aslpadova.",
-        "asltreviso.",
-        "aslvicenza.",
-        "aslverona.",
-        "aslrovigo.",
-        "aslbelluno.",
-        "asltrieste.",
-        "aslgorizia.",
-        "asludine.",
-        "aslpordenone.",
-        "aslgenova.",
-        "aslsavona.",
-        "aslimperia.",
-        "aslspezia.",
-        "aslparma.",
-        "aslmodena.",
-        "aslreggioemilia.",
-        "aslferrara.",
-        "aslravennail.",
-        "aslbologna.",
-        "aslforli.",
-        "aslcesena.",
-        "aslrimini.",
-        "aslpisa.",
-        "aslfirenze.",
-        "aslprato.",
-        "aslarezzo.",
-        "asllivorno.",
-        "aslsiena.",
-        "aslgrosseto.",
-        "aslmassa.",
-        "asllatina.",
-        "asllucca.",
-        "aslpistoia.",
-        "asltoscana.",
-        "aslterni.",
-        "aslperugia.",
-        "aslmarche.",
-        "aslancona.",
-        "aslfano.",
-        "aslascoli.",
-        "aslpesaro.",
-        "aslfoggia.",
-        "aslbarletta.",
-        "aslbrindisi.",
-        "asllecce.",
-        "asltaranto.",
-        "aslbari.",
-        "aslpotenza.",
-        "aslmatera.",
-        "aslcatanzaro.",
-        "aslreggiocalabria.",
-        "aslcosenza.",
-        "aslcrotone.",
-        "aslvibovalentia.",
-        "aslagr.",
-        "aslsiracusa.",
-        "aslcatania.",
-        "aslragusa.",
-        "asltrapani.",
-        "aslenna.",
-        "aslcaltanissetta.",
-        "aslpalermo.",
-        "aslprato.",
-        "aslsassari.",
-        "aslcagliari.",
-        "edilportale.",
-        "edilizialavoro.",
-        "cantiereonline.",
-        "ediliziaeprogetti.",
-        "materialiedili.",
-        "supersiti.",
-        "costruttoriitaliani.",
-        "progettoedilizia.",
-        "ediliziaweb.",
-        "buildingsmartitalia.",
-        "architettiitaliani.",
-        "ediliziasostenibile.",
-        "smartbuildingitalia.",
-        "casainnovativa.",
-        "sistemiedilizi.",
-        "tecnologiedilizia.",
-        "ingegneriacivile.",
-        "ediliziamoderna.",
-        "ristrutturazioneitalia.",
-        "edificiuniti.",
-        "ediliziabuilding.",
-        "casaedilizia.",
-        "ediliziapiu.",
-        "edilglobal.",
-        "areacostruzioni.",
-        "mattoniedilizia.",
-        "ediliziafacile.",
-        "edilsite.",
-        "ristrutturaora.",
-        "soluzioniedili.",
-        "edilizialine.",
-        "italcostruzioni.",
-        "ediltrend.",
-        "innovazioneedile.",
-        "ediliziainrete.",
-        "bigconstruction.",
-        "italianedilizia.",
-        "tuttoperedilizia.",
-        "ediliziacentro.",
-        "networkedilizia.",
-        "casarinnovata.",
-        "zara.",
-        "hm.",
-        "uniqlo.",
-        "bershka.",
-        "stradivarius.",
-        "pullandbear.",
-        "mango.",
-        "shein.",
-        "northface.",
-        "patagonia.",
-        "columbia.",
-        "levi.",
-        "wrangler.",
-        "lee.",
-        "diesel.",
-        "timberland.",
-        "replayjeans.",
-        "pepejeans.",
-        "sisley.",
-        "benetton.",
-        "calvinklein.",
-        "tommyhilfiger.",
-        "boss.",
-        "armani.",
-        "gucci.",
-        "versace.",
-        "louisvuitton.",
-        "prada.",
-        "michaelkors.",
-        "valentino.",
-        "chanel.",
-        "dior.",
-        "balenciaga.",
-        "ferragamo.",
-        "tods.",
-        "hogan.",
-        "lacoste.",
-        "ralphlauren.",
-        "nike.",
-        "puma.",
-        "adidas.",
-        "underarmour.",
-        "newbalance.",
-        "converse.",
-        "vans.",
-        "oxbow.",
-        "carhartt.",
-        "superdry.",
-        "quiksilver.",
-        "billabong.",
-        "oakley.",
-        "ripcurl.",
-        "dcshoes.",
-        "elementbrand.",
-        "rvca.",
-        "volcom.",
-        "hurley.",
-        "roxy.",
-        "americaeagle.",
-        "oldnavy.",
-        "abercrombie.",
-        "hollisterco.",
-        "burberry.",
-        "massimodutti.",
-        "thekooples.",
-        "zadig-et-voltaire.",
-        "sandro-paris.",
-        "maje.",
-        "bcbg.",
-        "anthropologie.",
-        "freepeople.",
-        "nordstrom.",
-        "macy.",
-        "kohls.",
-        "bloomingdales.",
-        "saksfifthavenue.",
-        "selfridges.",
-        "harrods.",
-        "debenhams.",
-        "zalando.",
-        "boohoo.",
-        "asos.",
-        "myntra.",
-        "farfetch.",
-        "net-a-porter.",
-        "ssense.",
-        "shopbop.",
-        "endclothing.",
-        "nordstromrack.",
-        "backcountry.",
-        "mrporter.",
-        "bluefly.",
-        "gilt.",
-        "oui.",
-        "modaoperandi.",
-        "italist.",
-        "yoox.",
-        "lanecrawford.",
-        "flannels.",
-        "revolve.",
-        "discountuniverse.",
-        "maisonmargiela.",
-        "alexanderwang.",
-        "proenzaschouler.",
-        "alexandermcqueen.",
-        "marcjacobs.",
-        "katespade.",
-        "toryburch.",
-        "coach.",
-        "dkny.",
-        "moschino.",
-        "louboutin.",
-        "manoloblahnik.",
-        "miu-miu.",
-        "viviennewestwood.",
-        "stella-mccartney.",
-        "karl.",
-        "pinko.",
-        "maxmara.",
-        "twinset.",
-        "liujo.",
-        "ysl.",
-        "ermenegildozegna.",
-        "bally.",
-        "fendi.",
-        "tods.",
-        "moreschi.",
-        "canali.",
-        "kiton.",
-        "brunellocucinelli.",
-        "boglioli.",
-        "lardini.",
-        "incotex.",
-        "ptpantaloni.",
-        "tombolini.",
-        "barbour.",
-        "belstaff.",
-        "gloverall.",
-        "moncler.",
-        "napapijri.",
-        "cpcompany.",
-        "schutz.",
-        "aldo.",
-        "stevemadden.",
-        "clarks.",
-        "birkenstock.",
-        "crocs.",
-        "famousfootwear.",
-        "dsw.",
-        "zappos.",
-        "shoemall.",
-        "onlineshoes.",
-        "shoecarnival.",
-        "footlocker.",
-        "finishline.",
-        "dickssportinggoods.",
-        "sportsdirect.",
-        "athleta.",
-        "gymshark.",
-        "reebok.",
-        "asics.",
-        "champion.",
-        "brooksrunning.",
-        "hoka.",
-        "sketchers.",
-        "kappa.",
-        "umbro.",
-        "columbiasportswear.",
-        "campion.",
-        "madewell.",
-        "bodenusa.",
-        "talbots.",
-        "loft.",
-        "express.",
-        "francescas.",
-        "forever21.",
-        "romwe.",
-        "zaful.",
-        "prettyfashion.",
-        "everlane.",
-        "outdoorvoices.",
-        "nikefactory.",
-        "reebokoutlet.",
-        "asicsoutlet.",
-        "championoutlet.",
-        "hanes.",
-        "carters.",
-        "kidsfashion.",
-        "hmchildrens.",
-        "babyshop.",
-        "mothercare.",
-        "kidsworld.",
-        "childrensplace.",
-        "toysclothing.",
-        "jojomamanbebe.",
-        "mamasandpapas.",
-        "kidswearhouse.",
-        "laredoute.",
-        "matalan.",
-        "george.",
-        "dorothyperkins.",
-        "wallisfashion.",
-        "peacocks.",
-        "newlook.",
-        "riverisland.",
-        "jackwills.",
-        "superdry.",
-        "tedbaker.",
-        "houseoffraser.",
-        "dune.",
-        "oasisfashion.",
-        "warehousefashion.",
-        "karenmillen.",
-        "coastfashion.",
-        "burton.",
-        "next.",
-        "primark.",
-        "debenhams.",
-        "johnlewis.",
-        "marksandspencer.",
-        "clothingattesco.",
-        "fandf.",
-        "halfords.",
-        "directsports.",
-        "sportdirectuk.",
-        "hotter.",
-        "shoezone.",
-        "barratts.",
-        "officersclub.",
-        "slaters.",
-        "scottsmenswear.",
-        "usc.",
-        "fashionworld.",
-        "longtallsally.",
-        "gapoutlet.",
-        "oldnavyoutlet.",
-        "mensfashionwear.",
-        "menswearhouse.",
-        "josbank.",
-        "bigandtailor.",
-        "xlclothing.",
-        "mensfashionxl.",
-        "largefashion.",
-        "pediatriaprofessionale.",
-        "centropediatria.",
-        "studiopediatrico.",
-        "pediatricapiu.",
-        "pediatriainfantile.",
-        "famigliapediatrica.",
-        "pediatricamedica.",
-        "salutepediatrica.",
-        "pediatriaonline.",
-        "pediatricgroup.",
-        "progettosalutepediatrica.",
-        "pediatricafutura.",
-        "pediatriainrete.",
-        "centroinfanzia.",
-        "bambinisalute.",
-        "pediatrianetwork.",
-        "pediatricoop.",
-        "pediatrimed.",
-        "pediatriclinic.",
-        "pediatriacentral.",
-        "pediatriadelbambino.",
-        "pediatrianova.",
-        "clinicadelbambino.",
-        "pediatriaitaliana.",
-        "pediatriadelbenessere.",
-        "pediatriasanitaria.",
-        "ospedalepediatrico.",
-        "pediatriaregione.",
-        "pediatriafamily.",
-        "pediatricchild.",
-        "pediatricarete.",
-        "pediatrimedicale.",
-        "pediatriadellasalute.",
-        "pediatriafacile.",
-        "pediatricpoint.",
-        "pediatriacura.",
-        "pediatrialight.",
-        "centropediatricasalute.",
-        "bmw.",
-        "audibyl.",
-        "mercedes-benz.",
-        "vw.",
-        "porsche.",
-        "toyota.",
-        "lexus.",
-        "nissanusa.",
-        "hyundai.",
-        "kia.",
-        "honda.",
-        "mazda.",
-        "subaru.",
-        "suzuki.",
-        "mitsubishi-motors.",
-        "volvo.",
-        "landrover.",
-        "jaguar.",
-        "fiat.",
-        "alfa-romeo.",
-        "lancia.",
-        "ferrari.",
-        "lamborghini.",
-        "maserati.",
-        "bentleymotors.",
-        "rolls-roycemotorcars.",
-        "bugatti.",
-        "ashtonmartin.",
-        "mcLaren.",
-        "dacia.",
-        "peugeot.",
-        "citroen.",
-        "opel.",
-        "renault.",
-        "skoda-auto.",
-        "seat.",
-        "chevrolet.",
-        "ford.",
-        "dodge.",
-        "jeep.",
-        "chrysler.",
-        "buick.",
-        "gmc.",
-        "tesla.",
-        "lucidmotors.",
-        "dm-drogeriemarkt.",
-        "rivian.",
-        "polestar.",
-        "byd.",
-        "geely.",
-        "greatwall.",
-        "mahindra.",
-        "tata.",
-        "mvagusta.",
-        "kawasakimotorcycle.",
-        "sherco.",
-        "ducati.",
-        "harley-davidson.",
-        "swm.",
-        "divinci.",
-        "suzuki.",
-        "ford.",
-        "alfa.",
-        "fiat.",
-        "skoda.",
-        "volkswagen.",
-        "bentley.",
-        "hummer.",
-        "yugo.",
-        "saaab.",
-        "bsa.",
-        "morini.",
-        "bmwitalia.",
-        "daciaitalia.",
-        "opelitalia.",
-        "jeepitalia.",
-        "forditalia.",
-        "teslamotors.",
-        "nio.",
-        "karson.",
-        "volocopter.",
-        "mobilissimo.",
-        "semtex.",
-        "bmw.",
-        "audibyl.",
-        "mercedes-benz.",
-        "vw.",
-        "porsche.",
-        "toyota.",
-        "lexus.",
-        "nissanusa.",
-        "hyundai.",
-        "kia.",
-        "honda.",
-        "mazda.",
-        "subaru.",
-        "suzuki.",
-        "mitsubishi-motors.",
-        "volvo.",
-        "landrover.",
-        "jaguar.",
-        "fiat.",
-        "alfa-romeo.",
-        "lancia.",
-        "ferrari.",
-        "lamborghini.",
-        "maserati.",
-        "bentleymotors.",
-        "rolls-roycemotorcars.",
-        "bugatti.",
-        "ashtonmartin.",
-        "mcLaren.",
-        "dacia.",
-        "peugeot.",
-        "citroen.",
-        "opel.",
-        "renault.",
-        "skoda-auto.",
-        "seat.",
-        "chevrolet.",
-        "ford.",
-        "dodge.",
-        "jeep.",
-        "chrysler.",
-        "buick.",
-        "gmc.",
-        "tesla.",
-        "lucidmotors.",
-        "rivian.",
-        "polestar.",
-        "byd.",
-        "geely.",
-        "greatwall.",
-        "mahindra.",
-        "tata.",
-        "mvagusta.",
-        "kawasakimotorcycle.",
-        "sherco.",
-        "ducati.",
-        "harley-davidson.",
-        "swm.",
-        "divinci.",
-        "suzuki.",
-        "ford.",
-        "alfa.",
-        "fiat.",
-        "skoda.",
-        "volkswagen.",
-        "bentley.",
-        "hummer.",
-        "yugo.",
-        "saaab.",
-        "bsa.",
-        "morini.",
-        "bmwitalia.",
-        "daciaitalia.",
-        "opelitalia.",
-        "jeepitalia.",
-        "forditalia.",
-        "teslamotors.",
-        "nio.",
-        "karson.",
-        "volocopter.",
-        "mobilissimo.",
-        "semtex.",
-        "harley-davidson.",
-        "indianmotorcycle.",
-        "yamaha-motor.",
-        "kawasaki.",
-        "suzuki-motorcycle.",
-        "honda-motorcycle.",
-        "ducati.",
-        "triumphmotorcycles.",
-        "bmw-motorrad.",
-        "kymco.",
-        "aprilia.",
-        "piaggio.",
-        "moto-guzzi.",
-        "vespa.",
-        "royalenfield.",
-        "beta-uk.",
-        "husqvarna-motorcycles.",
-        "gasgas.",
-        "swm-motorcycles.",
-        "sherco.",
-        "bimota.",
-        "guzzi.",
-        "nortonmotorcycles.",
-        "cagiva.",
-        "agv.",
-        "bellhelmets.",
-        "shoei.",
-        "arai.",
-        "schuberth.",
-        "ls2helmets.",
-        "hjc.",
-        "shark-helmets.",
-        "mthelmets.",
-        "zeus-helmets.",
-        "scorpion-exo.",
-        "icon1000.",
-        "dainese.",
-        "alpinestars.",
-        "matrimonio.",
-        "revitsport.",
-        "spidi.",
-        "bull-it.",
-        "jeanlouisdavid.",
-        "pacorabannehair.",
-        "aldobarbershop.",
-        "salonemilano.",
-        "dessange.",
-        "toniandguy.",
-        "haircoif.",
-        "testanmarques.",
-        "provostparrucchieri.",
-        "contestarockhair.",
-        "salonguerrieri.",
-        "diegoalonsosalons.",
-        "matrixhair.",
-        "framesi.",
-        "paulmitchell.",
-        "wella.",
-        "lorealprofessionnel.",
-        "schwarzkopf.",
-        "tigi.",
-        "hairdreams.",
-        "ghdhair.",
-        "alteregohair.",
-        "evosalon.",
-        "kemon.",
-        "hairboxitalia.",
-        "hairfusion.",
-        "hairmania.",
-        "biotonic.",
-        "aldebaran.",
-        "fashioncuts.",
-        "hairlux.",
-        "beautyfactory.",
-        "blowdrybar.",
-        "salonelite.",
-        "hairdesign.",
-        "solair.",
-        "salonprofessional.",
-        "hairhouse.",
-        "salonexperience.",
-        "salonmodern.",
-        "hairkingdom.",
-        "parlux.",
-        "hairven.",
-        "shinehair.",
-        "stylehair.",
-        "salonclub.",
-        "glamhair.",
-        "modhair.",
-        "coop.",
-        "conad.",
-        "esselunga.",
-        "lidl.",
-        "carrefour.",
-        "auchan.",
-        "despar.",
-        "pam.",
-        "eurospin.",
-        "selexgc.",
-        "iper.",
-        "bennet.",
-        "mdspa.",
-        "pennymarket.",
-        "tigros.",
-        "famila.",
-        "ilgigante.",
-        "aliper.",
-        "dok.",
-        "sisa.",
-        "todis.",
-        "simplymarket.",
-        "insmercato.",
-        "maxidi.",
-        "spazio.conad.",
-        "superconti.",
-        "coal.",
-        "migross.",
-        "magazzinogru.",
-        "sigma.",
-        "supersigma.",
-        "cityper.",
-        "aliper.",
-        "unicomm.",
-        "unicoop.",
-        "unicoopfirenze.",
-        "ipercoop.",
-        "migrossspa.",
-        "rossettisupermercati.",
-        "mercatodimezzogiorno.",
-        "superpan.",
-        "craiperte.",
-        "futura.",
-        "mercatoneuno.",
-        "superemme.",
-        "scelto.",
-        "sidis.",
-        "vegmarket.",
-        "bio.supermercati.",
-        "trekbikes.",
-        "canyon.",
-        "specialized.",
-        "scott-sports.",
-        "cannondale.",
-        "bianchi.",
-        "pinarello.",
-        "cervelo.",
-        "giant-bicycles.",
-        "orbea.",
-        "fujibikes.",
-        "merida-bikes.",
-        "khsbicycles.",
-        "kona.",
-        "santa-cruz.",
-        "focus-bikes.",
-        "cube.",
-        "ridley-bikes.",
-        "colnago.",
-        "wilier.",
-        "haibike.",
-        "marinbikes.",
-        "nsbikes.",
-        "lapierre-bikes.",
-        "argon18bike.",
-        "velopress.",
-        "feltbicycles.",
-        "rosebikes.",
-        "ghost-bikes.",
-        "yeticycles.",
-        "salsa.",
-        "ibisbikes.",
-        "bmc-switzerland.",
-        "rockymountainbikes.",
-        "ninerbikes.",
-        "polygonbikes.",
-        "raleigh.",
-        "diamondback.",
-        "koga.",
-        "schwinnbikes.",
-        "parlee.",
-        "kinesisbikes.",
-        "whytebikes.",
-        "gt-bicycles.",
-        "gazellebikes.",
-        "regione.lombardia.",
-        "regione.piemonte.",
-        "regione.veneto.",
-        "regione.liguria.",
-        "regione.emiliaromagna.",
-        "regione.toscana.",
-        "regione.umbria.",
-        "regione.marche.",
-        "regione.lazio.",
-        "regione.abruzzo.",
-        "regione.molise.",
-        "regione.campania.",
-        "regione.puglia.",
-        "regione.basilicata.",
-        "regione.calabria.",
-        "regione.sicilia.",
-        "regione.sardegna.",
-        "regione.trentinoaltoadige.",
-        "regione.friuliveneziagiulia.",
-        "regione.valledaosta.",
-        "moustachebikes.",
-        "terratrike.",
-        "ternbicycles.",
-        "lynskeyperformance.",
-        "surlybikes.",
-        "moots.",
-        "matrimonio.",
-        "bricoman.",
-        "tecnomat.",
-        "apple.",
-        "arcaplanet.",
-        "canon.",
-        "globo.",
-        "burgerking.",
-        "maisonsdumonde.",
-        "kfc.",
-        "hm.",
-        "happycasa.",
-        "sonnybono.",
-        "levis.",
-        "meltingpot.",
-        "vikingop.",
-        "dhl.",
-        "gls-italy.",
-        "ups.",
-        "fedex.",
-        "miodottore.",
-        "booking.",
-        "airbnb.",
-        "twitter.",
-        "youtube.",
-        "pinterest.",
-        "tripadvisor.",
-        "tiktok.",
-        "wix.",
-        "trivago.",
-        "squarespace.",
-        "godaddy.",
-        "weebly.",
-        "tumblr.",
-        ".edu.",
-        "calendar.app.google.",
-        "linktr.ee",
-        "care-dent.",
-        "doctolib.",
-        "dentego.",
-        "dottori.",
-        "yellow.local.",
-        "larc.",
-        "drmax.",
-
-        "sanita.",
-        "fb.me.",
-        "poste.",
-        "bianalisi.",
-        "sisal.",
-        "eurobet.",
-        "betfair.",
-        "roulette.",
-        "gioco.",
-        "scommesse.",
-        "casino.",
-        "supermercatidok.",
-        "mondadoristore.",
-        "amazon.",
-        "prenatal.",
-        "aeo.",
-        "toyscenter.",
-        "coop.",
-        "conad.",
-        "visionottica.",
-        "amplifon.",
-        "grandivision.",
-        "wa.me.",
-        "ebay.",
-        "aliexpress.",
-        "zalando.",
-        "asos.",
-        "kayak.",
-        "kayak.",
-        ".gov.",
-        "sephora.",
-        "douglas.",
-        "yves-rocher.",
-        "tigota.",
-        "welinkbuilders.",
-        "lidl.",
-        "eurospin.",
-        "despar.",
-        "mdspa.",
-        "aw-lab.",
-        "footlocker.",
-        "telegram.",
-        "viber.",
-        "shein.",
-        "etsy.",
-        "wish.",
-        "ikea.",
-        "leroymerlin.",
-        "mediaworld.",
-        "unieuro.",
-        "trony.",
-        "decathlon.",
-        "decathlon.",
-        "euronics.",
-        "pullandbear.",
-        "zalandoprive.",
-        "stradivarius.",
-        "mcdonalds.",
-        "alcott.",
-        "mongolfieralecce.",
-        "auchan.",
-        "intimissimi.",
-        "bershka.",
-        "zara.",
-        "snai.",
-        "bwin.",
-        "starcasino.",
-        "leovegas.",
-        "betway.",
-        "netflix.",
-        "disneyplus.",
-        "primevideo.",
-        "spotify.",
-        "expedia.",
-        "lastminute.",
-        "skyscanner.",
-        "italo.",
-        "ryanair.",
-        "easyjet.",
-        "inps.",
-        "agenziaentrate.",
-        "anagrafe.",
-        "ovs.",
-        "coursera.",
-        "chicco.",
-        "casanovadesign.",
-        "casaamica.",
-        "buffetti.",
-        "poste.",
-        "lg.",
-        "samsung.",
-        "bartolini.",
-        "fiat.",
-        "lancia.",
-        "spaziocasa.",
-        "mango.",
-        "volkswagen.",
-        "bmw.",
-        "audi.",
-        "mercedes-benz.",
-        "peugeot.",
-        "renault.",
-        "toyota.",
-        "hyundai.",
-        "nissan.",
-        "kia.",
-        "seat.",
-        "skoda-auto.",
-        "jeep.",
-        "tesla.",
-        "maserati.",
-        "lamborghini.",
-        "ferrari.",
-        "dsautomobiles.",
-        "uniqlo.",
-        "gap.",
-        "banana-republic.",
-        "topshop.",
-        "calvinklein.",
-        "tommy.",
-        "diesel.",
-        "northface.",
-        "timberland.",
-        "rolex.",
-        "napapijri.",
-        "lacoste.",
-        "poliziadistato.",
-        "carabinieri.",
-        "visitlecce.",
-        "aldi.",
-        "penny.",
-        "tigerstores.",
-        "cooponline.",
-        "esselunga.",
-        "asus.",
-        "lenovo.",
-        "acer.",
-        "dell.",
-        "hp.",
-        "nike.",
-        "adidas.",
-        "underarmour.",
-        "reebok.",
-        "patagonia.",
-        "alitalia.",
-        "trenitalia.",
-        "volagratis.",
-        "blablacar.",
-        "flixbus.",
-        "c-and-a.",
-        "promod.",
-        "guess.",
-        "mangooutlet.",
-        "citroen.",
-        "opel.",
-        "volvo.",
-        "subaru.",
-        "mitsubishi-motors.",
-        "xiaomi.",
-        "oppo.",
-        "huawei.",
-        "nokia.",
-        "tnt.",
-        "hermes.",
-        "brt.",
-        "social.quandoo.",
-        "coin.",
-        "calzedonia.",
-        "tezenis.",
-        "benetton.",
-        "oysho.",
-        "desigual.",
-        "todis.",
-        "carrefour.",
-        "iper.",
-        "supermedia.",
-        "msi.",
-        "razer.",
-        "corsair.",
-        "logitech.",
-        "vodafone.",
-        "tim.",
-        "windtre.",
-        "fastweb.",
-        "autogrill.",
-        "granarolo.",
-        "barilla.",
-        "mulino.",
-        "ministerosalute.",
-        "acquedotti.",
-        "poltronesofa.",
-        "mediatek.",
-        "qualcomm.",
-        "intel.",
-        "amd.",
-        "nvidia.",
-        "fendi.",
-        "balenciaga.",
-        "versace.",
-        "saintlaurent.",
-        "burberry.",
-        "hermes.",
-        "cartier.",
-        "chanel.",
-        "fisioterapisti.",
-        "farmacoecura.",
-        "humanitas.",
-        "santagostino.",
-        "ducati.",
-        "piaggio.",
-        "iveco.",
-        "bancaintesa.",
-        "unicreditgroup.",
-        "findomestic.",
-        "fineco.",
-        "n26.",
-        "justeat.",
-        "glovoapp.",
-        "deliveroo.",
-        "ubereats.",
-        "reidcycles.",
-        "mediaworld.",
-        "euronics.",
-        "unieuro.",
-        "trony.",
-        "saturn.",
-        "expert.",
-        "eldoradostore.",
-        "mediamarkt.",
-        "fnac.",
-        "melectronics.",
-        "interdiscount.",
-        "pccity.",
-        "gamedigital.",
-        "microcenter.",
-        "bestbuy.",
-        "currys.",
-        "apple.",
-        "dell.",
-        "hp.",
-        "asus.",
-        "lenovo.",
-        "acer.",
-        "samsung.",
-        "sony.",
-        "lg.",
-        "huawei.",
-        "xiaomi.",
-        "oneplus.",
-        "oppo.",
-        "vivo.",
-        "nokia.",
-        "motorola.",
-        "intel.",
-        "amd.",
-        "nvidia.",
-        "anker.",
-        "bose.",
-        "jbl.",
-        "logitech.",
-        "sennheiser.",
-        "western-digital.",
-        "seagate.",
-        "crucial.",
-        "corsair.",
-        "kingston.",
-        "adata.",
-        "gigabyte.",
-        "msi.",
-        "razer.",
-        "steelseries.",
-        "thrustmaster.",
-        "sharkoon.",
-        "nzxt.",
-        "tp-link.",
-        "netgear.",
-        "d-link.",
-        "asustor.",
-        "synology.",
-        "qnap.",
-        "nest.",
-        "gopro.",
-        "dji.",
-        "ring.",
-        "fiat.",
-        "intesa.",
-        "unicreditgroup.",
-        "generali.",
-        "luxottica.",
-        "telecomitalia.",
-        "postitaliane.",
-        "leonardo.",
-        "ferroviedellostato.",
-        "saipem.",
-        "italcementi.",
-        "prysmian.",
-        "fincantieri.",
-        "snam.",
-        "mediolanum.",
-        "benetton.",
-        "tods.",
-        "moncler.",
-        "ferrari.",
-        "lamborghini.",
-        "bulgari.",
-        "chicco.",
-        "ducati.",
-        "bialetti.",
-        "pirelli.",
-        "bialettigroup.",
-        "amplifon.",
-        "cucinelli.",
-        "campari.",
-        "barilla.",
-        "mutuionline.",
-        "yoox.",
-        "moleskine.",
-        "cattolica.",
-        "generalmotors.",
-        "target.",
-        "caterpillar.",
-        "google.",
-        "amazon.",
-        "apple.",
-        "microsoft.",
-        "ibm.",
-        "samsung.",
-        "tencent.",
-        "alphabet.",
-        "siemens.",
-        "philips.",
-        "disney.",
-        "cisco.",
-        "pepsico.",
-        "cocacola.",
-        "netflix.",
-        "visa.",
-        "mastercard.",
-        "paypal.",
-        "booking.",
-        "adidas.",
-        "nike.",
-        "uber.",
-        "lyft.",
-        "airbnb.",
-        "glovoapp.",
-        "deliveroo.",
-        "justeat.",
-        "ubereats.",
-        "foodora.",
-        "domicilios.",
-        "pizza-boom.",
-        "pizzahutdelivery.",
-        "dominos.",
-        "postmates.",
-        "grubhub.",
-        "doordash.",
-        "caviar.",
-        "seamless.",
-        "foodpanda.",
-        "zomato.",
-        "swiggy.",
-        "instacart.",
-        "shipt.",
-        "getir.",
-        "gorillas.",
-        "flink.",
-        "carrefourdelivery.",
-        "easycoop.",
-        "spesaalvolo.",
-        "picnic.",
-        "grocerydelivery.",
-        "freshdirect.",
-        "box8.",
-        "zeekit.",
-        "ubereatsdrivers.",
-        "courierexpress.",
-        "fooddeliveries.",
-        "myeats.",
-        "ubereatsrider.",
-        "deliveryhero.",
-        "takeaway.",
-        "rocketdelivery.",
-        "eatzapp.",
-        "bitesquad.",
-        "marleyspoon.",
-        "hungryroot.",
-        "hellofresh.",
-        "amazon.",
-        "ebay.",
-        "aliexpress.",
-        "etsy.",
-        "walmart.",
-        "target.",
-        "shein.",
-        "zalando.",
-        "asos.",
-        "farfetch.",
-        "net-a-porter.",
-        "ssense.",
-        "shopify.",
-        "depop.",
-        "temumarketplace.",
-        "cdiscount.",
-        "mercadolivre.",
-        "flipkart.",
-        "myntra.",
-        "snapdeal.",
-        "rakuten.",
-        "uniqlo.",
-        "hm.",
-        "zara.",
-        "pullandbear.",
-        "stradivarius.",
-        "mango.",
-        "nike.",
-        "adidas.",
-        "reebok.",
-        "underarmour.",
-        "converse.",
-        "vans.",
-        "newbalance.",
-        "patagonia.",
-        "columbia.",
-        "theoutnet.",
-        "bestbuy.",
-        "currys.",
-        "mediatechstore.",
-        "euronics.",
-        "unieuro.",
-        "trony.",
-        "mediaworld.",
-        "apple.",
-        "samsung.",
-        "xiaomi.",
-        "hp.",
-        "lenovo.",
-        "asus.",
-        "dell.",
-        "acer.",
-        "microsoft.",
-        "logitech.",
-        "jbl.",
-        "bose.",
-        "anker.",
-        "corsair.",
-        "razer.",
-        "sweetwater.",
-        "musiciansfriend.",
-        "thomann.",
-        "zappos.",
-        "famousfootwear.",
-        "footlocker.",
-        "dsw.",
-        "crocstore.",
-        "allbirds.",
-        "sunglasshut.",
-        "warbyparker.",
-        "revolve.",
-        "boohoo.",
-        "romwe.",
-        "zaful.",
-        "forever21.",
-        "hollisterco.",
-        "abercrombie.",
-        "sephora.",
-        "douglas.",
-        "marionnaud.",
-        "profumeriesabbioni.",
-        "profumeriaweb.",
-        "pinalli.",
-        "limonishop.",
-        "tigotastore.",
-        "echarme.",
-        "mybeauty.",
-        "beautybay.",
-        "lookfantastic.",
-        "feelunique.",
-        "fragrancenet.",
-        "perfumesclub.",
-        "parfumdreams.",
-        "escentual.",
-        "allbeauty.",
-        "theperfumeshop.",
-        "parfimo.",
-        "profumerialanza.",
-        "profumeriegardenia.",
-        "beautyforyou.",
-        "pureprofumi.",
-        "profumix.",
-        "profumeriapecchioli.",
-        "profumeriafresia.",
-        "profumeriapiazza.",
-        "profumeriamarino.",
-        "fragonard.",
-        "profumeriadante.",
-        "mondadoristore.",
-        "lafeltrinelli.",
-        "hoepli.",
-        "ilibridi.",
-        "ibs.",
-        "libraccio.",
-        "bibliotecaitaliana.",
-        "bookrepublic.",
-        "libroco.",
-        "rizzolilibri.",
-        "fantasybookshop.",
-        "bookcitymilano.",
-        "einaudi.",
-        "sellerio.",
-        "pandorastore.",
-        "libreriarizzoli.",
-        "feltrinellieditore.",
-        "simonandschuster.",
-        "harpercollins.",
-        "penguinrandomhouse.",
-        "hachettebookgroup.",
-        "mcmillan.",
-        "dovershop.",
-        "librerialedesma.",
-        "mondialibro.",
-        "shop.librimondadori.",
-        "letturebookshop.",
-        "libriperpassione.",
-        "librerialussana.",
-        "leggeremania.",
-        "novellalibri.",
-        "storytel.",
-        "toysrus.",
-        "babydreams.",
-        "toyscenter.",
-        "bimbostore.",
-        "la-citta-del-sole.",
-        "legoshop.",
-        "trudi.",
-        "clementoni.",
-        "ravensburger.",
-        "hasbro.",
-        "playmobil.",
-        "shopdisney.",
-        "animalplanetstore.",
-        "barbie.",
-        "playtime.",
-        "magictoystore.",
-        "kidzworldtoys.",
-        "toybox.",
-        "fisher-price.",
-        "melissaanddoug.",
-        "smartgames.",
-        "boardgameshop.",
-        "toyplanet.",
-        "kidstoystore.",
-        "jumbo.",
-        "toys4you.",
-        "toysland.",
-        "giochipreziosi.",
-        "mattel.",
-        "megamindtoys.",
-        "modellistore.",
-        "woodentoys.",
-        "toytown.",
-        "juventus.",
-        "acmilan.",
-        "inter.",
-        "napolicalcio.",
-        "atalanta.",
-        "sslazio.",
-        "romacalcio.",
-        "hellasverona.",
-        "ucfiorentina.",
-        "ussalernitana.",
-        "sampdoria.",
-        "leccecalcio.",
-        "bolognafc.",
-        "empolifc.",
-        "sassuolocalcio.",
-        "parmacalcio1913.",
-        "reggianacalcio.",
-        "spalferrara.",
-        "beneventocalcio.",
-        "palermocalcio.",
-        "bari1908.",
-        "cagliaricalcio.",
-        "pisacalcio.",
-        "veneziafc.",
-        "monzafc.",
-        "cesenacalcio.",
-        "taranto.",
-        "trapani.",
-        "pordenonecalcio.",
-        "cataniacalcio.",
-        "decathlon.",
-        "intersport.",
-        "sportler.",
-        "tuttosport.",
-        "sportexpert.",
-        "deporvillage.",
-        "sportland.",
-        "sportsdirect.",
-        "dicksportinggoods.",
-        "footlocker.",
-        "eastbay.",
-        "reebokoutlet.",
-        "nikeoutlet.",
-        "underarmour.",
-        "fanatics.",
-        "soccer.",
-        "snowinn.",
-        "bikeinn.",
-        "runnerinn.",
-        "surfdome.",
-        "sportscheck.",
-        "prodirectsoccer.",
-        "prodirectrunning.",
-        "kitbag.",
-        "all4cycling.",
-        "sportteam.",
-        "calcioshop.",
-        "weplay.",
-        "evoride.",
-        "tenniswarehouse.",
-        "golfgalaxy.",
-        "baseballmonkey.",
-        "hockeymonkey.",
-        "volleyballusa.",
-        "climbershop.",
-        "campmor.",
-        "backcountry.",
-        "moosejaw.",
-        "booking.",
-        "expedia.",
-        "skyscanner.",
-        "kayak.",
-        "lastminute.",
-        "agoda.",
-        "viator.",
-        "civitatis.",
-        "getyourguide.",
-        "travelocity.",
-        "orbitz.",
-        "trip.",
-        "trivago.",
-        "hotels.",
-        "priceline.",
-        "flightcentre.",
-        "travel2be.",
-        "bestday.",
-        "etihadtravel.",
-        "emiratesholidays.",
-        "virginholidays.",
-        "thomascook.",
-        "tui.",
-        "americantours.",
-        "europeantravel.",
-        "italianjourneys.",
-        "dreamtrips.",
-        "evolvi.",
-        "goway.",
-        "contiki.",
-        "intrepidtravel.",
-        "overseasadventuretravel.",
-        "discoverytours.",
-        "exoticjourneys.",
-        "adventureworld.",
-        "safaribookings.",
-        "worldexpeditions.",
-        "insightvacations.",
-        "twitter.",
-        "tiktok.",
-        "pinterest.",
-        "snapchat.",
-        "reddit.",
-        "tumblr.",
-        "clubhouse.",
-        "quora.",
-        "medium.",
-        "telegram.",
-        "wechat.",
-        "line.",
-        "kakao.",
-        "zalo.",
-        "vkontakte.",
-        "myspace.",
-        "mastodon.",
-        "beacons.",
-        "onlyfans.",
-        "patreon.",
-        "pixiv.",
-        "deviantart.",
-        "youtube.",
-        "vimeo.",
-        "dailymotion.",
-        "rumble.",
-        "peertube.",
-        "twitch.",
-        "kick.",
-        "steamcommunity.",
-        "itch.",
-        "roblox.",
-        "discord.",
-        "hertz.",
-        "avis.",
-        "europcar.",
-        "enterprise.",
-        "budget.",
-        "thrifty.",
-        "alamo.",
-        "nationalcar.",
-        "sicilybycar.",
-        "goldcar.",
-        "rentalcars.",
-        "sixtrentacar.",
-        "zipcar.",
-        "dollar.",
-        "autonoleggio.",
-        "carrental.",
-        "locautorent.",
-        "maggiore.",
-        "drivalia.",
-        "kayak.",
-        "turo.",
-        "carnext.",
-        "leasys.",
-        "focusrent.",
-        "sixt.",
-        "amigoautos.",
-        "fireflycarrental.",
-        "carflexi.",
-        "rentacaritalia.",
-        "olocars.",
-        "solrentacar.",
-        "unicredit.",
-        "intesasanpaolo.",
-        "ubi.",
-        "mediobanca.",
-        "bper.",
-        "credit-agricole.",
-        "montepaschi.",
-        "popso.",
-        "bancobpm.",
-        "carige.",
-        "bnl.",
-        "finecobank.",
-        "chebanca.",
-        "postepay.",
-        "revolut.",
-        "n26.",
-        "hsbc.",
-        "santander.",
-        "barclays.",
-        "deutsche-bank.",
-        "raiffeisen.",
-        "credit-suisse.",
-        "bbva.",
-        "commerzbank.",
-        "abnamro.",
-        "ing.",
-        "dbs.",
-        "citibank.",
-        "bankofamerica.",
-        "jpmorganchase.",
-        "wellsfargo.",
-        "goldmansachs.",
-        "morganstanley.",
-        "tdbank.",
-        "bmo.",
-        "rbc.",
-        "cibc.",
-        "bankofchina.",
-        "icbc.",
-        "generali.",
-        "allianz.",
-        "axa.",
-        "zurich.",
-        "realegroup.",
-        "unipolsai.",
-        "groupama.",
-        "helvetia.",
-        "mapfre.",
-        "aviva.",
-        "amfam.",
-        "prudential.",
-        "aig.",
-        "metlife.",
-        "geico.",
-        "nationwide.",
-        "statefarm.",
-        "liberty-mutual.",
-        "progressive.",
-        "pingan.",
-        "china-life.",
-        "chubb.",
-        "hiscox.",
-        "eulerhermes.",
-        "berkshirehathaway.",
-        "assicurazioni.",
-        "postevita.",
-        "fondiaria-sai.",
-        "alleanza.",
-        "eurovita.",
-        "italianaassicurazioni.",
-        "tuaassicurazioni.",
-        "vittoriassicurazioni.",
-        "tempocasaassicurazioni.",
-        "unicreditassicurazioni.",
-        "alitalia.",
-        "lufthansa.",
-        "ryanair.",
-        "easyjet.",
-        "airfrance.",
-        "britishairways.",
-        "emirates.",
-        "qatarairways.",
-        "etihad.",
-        "americanairlines.",
-        "delta.",
-        "united.",
-        "koreanair.",
-        "singaporeair.",
-        "thaiairways.",
-        "japanairlines.",
-        "airchina.",
-        "cathaypacific.",
-        "aeroflot.",
-        "klm.",
-        "sas.",
-        "finnair.",
-        "tapair.",
-        "austrian.",
-        "iberia.",
-        "swiss.",
-        "virginatlantic.",
-        "norwegian.",
-        "bambooairways.",
-        "vietnamairlines.",
-        "turkishairlines.",
-        "pegasusairlines.",
-        "gulfair.",
-        "omanair.",
-        "ethiopianairlines.",
-        "airmauritius.",
-        "southafricanairways.",
-        "airnewzealand.",
-        "latam.",
-        "aeromexico.",
-        "copaair.",
-        "avianca.",
-        "wizzair.",
-        "vueling.",
-        "flyniki.",
-        "airasia.",
-        "cebuair.",
-        "tigerair.",
-        "jetstar.",
-        "twitter.",
-        "tiktok.",
-        "snapchat.",
-        "youtube.",
-        "spotify.",
-        "netflix.",
-        "amazon.",
-        "ebay.",
-        "aliexpress.",
-        "uber.",
-        "lyft.",
-        "google.",
-        "gmail.",
-        "zoom.",
-        "slack.",
-        "pinterest.",
-        "reddit.",
-        "medium.",
-        "quora.",
-        "clubhouse.",
-        "discord.",
-        "twitch.",
-        "vimeo.",
-        "zomato.",
-        "getyourguide.",
-        "booking.",
-        "expedia.",
-        "skyscanner.",
-        "kayak.",
-        "dropbox.",
-        "drive.google.",
-        "onedrive.",
-        "github.",
-        "gitlab.",
-        "notion.",
-        "trello.",
-        "asana.",
-        "monzo.",
-        "n26.",
-        "revolut.",
-        "paypal.",
-        "venmo.",
-        "stripe.",
-        "square.",
-        "coinbase.",
-        "binance.",
-        "robinhood.",
-        "inder.",
-        "bumble.",
-        "netflixparty.",
-        "strava.",
-        "foursquare.",
-        "mapmyrun.",
-        "samsung.",
-        "apple.",
-        "hp.",
-        "lenovo.",
-        "asus.",
-        "dell.",
-        "acer.",
-        "microsoft.",
-        "logitech.",
-        "jbl.",
-        "bose.",
-        "anker.",
-        "corsair.",
-        "razer.",
-        "sweetwater.",
-        "musiciansfriend.",
-        "thomann.",
-        "shazam.",
-        "alarmy.",
-        "pandora.",
-        "feedly.",
-        "flipboard.",
-        "bbc.",
-        "cnn.",
-        "nyt.",
-        "theguardian.",
-
+    // Verifica contro i domini del file JSON
+    if _, found := excludedWebsites[domain]; found {
+        fmt.Printf("Sito escluso (file JSON): %s\n", url)
+        return true
     }
 
-    // Controlla se il dominio contiene uno dei social media
-    for _, smDomain := range socialMediaDomains {
-        if strings.Contains(domain, smDomain) {
-            fmt.Printf("Sito escluso: %s\n", url)
-            return true // Se il dominio è tra quelli esclusi, restituisci true
-        }
+    // Verifica contro domini social o prefissi
+    if isSocialOrSpecificDomain(domain) {
+        fmt.Printf("Sito escluso (social o specifico): %s\n", url)
+        return true
     }
 
-    // Aggiungi il controllo per i domini che contengono la parola "comune" o "e-coop.it"
-    if strings.Contains(domain, "comune.") || strings.Contains(domain, "e-coop.it") || strings.Contains(domain, ".iqos.") || strings.Contains(domain, ".tecnocasa.") {
-        fmt.Printf("Sito escluso: %s\n", url)
-        return true // Se il dominio contiene "comune" o "e-coop.it", escludi il sito
+    // Verifica contro domini con prefissi specifici
+    if hasForbiddenPrefix(domain) {
+        fmt.Printf("Sito escluso (prefisso): %s\n", url)
+        return true
     }
 
-    // Aggiungi il controllo per i domini che iniziano con "lecce" o "centrocommerciale"
-    if strings.HasPrefix(strings.ToLower(domain), "lecce") || strings.HasPrefix(strings.ToLower(domain), "centrocommerciale") {
-        fmt.Printf("Sito escluso (inizia con lecce o centrocommerciale): %s\n", url)
-        return true // Se il dominio inizia con "lecce" o "centrocommerciale", escludi il sito
+    // Verifica contro estensioni particolari
+    if hasForbiddenExtension(domain) {
+        fmt.Printf("Sito escluso (estensione): %s\n", url)
+        return true
     }
 
-    // Aggiungi il controllo per i domini con estensione .edu.it
-    eduAndNetDomains := []string{
-        ".edu.it",
-        ".fr",
-    }
-
-    for _, suffix := range eduAndNetDomains {
-        if strings.HasSuffix(domain, suffix) {
-            fmt.Printf("Sito escluso (.edu.it): %s\n", url)
-            return true // Se il dominio ha l'estensione .edu.it, escludi il sito
-        }
-    }
-
-    // Controlla se il dominio è tra quelli nel file di esclusione
-    _, found := excludedWebsites[domain]
-    return found
+    return false // Il sito non è escluso
 }
+
+func isSocialOrSpecificDomain(domain string) bool {
+    // Lista dei domini o parole da escludere
+    keywords := []string{
+        "facebook.", "instagram.", "linkedin.", "youtube.", "tiktok.",
+        "comune.", "e-coop.it", ".iqos.", ".tecnocasa.",
+    }
+
+    for _, keyword := range keywords {
+        if strings.Contains(domain, keyword) {
+            return true
+        }
+    }
+
+    return false
+}
+
+func hasForbiddenPrefix(domain string) bool {
+    prefixes := []string{"lecce", "centrocommerciale"}
+
+    for _, prefix := range prefixes {
+        if strings.HasPrefix(strings.ToLower(domain), prefix) {
+            return true
+        }
+    }
+
+    return false
+}
+
+func hasForbiddenExtension(domain string) bool {
+    extensions := []string{".edu.it", ".fr"}
+
+    for _, ext := range extensions {
+        if strings.HasSuffix(domain, ext) {
+            return true
+        }
+    }
+
+    return false
+}
+
 
 func validateEmail(email string) string {
 	if len(email) > 100 {

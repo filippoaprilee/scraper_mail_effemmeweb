@@ -36,10 +36,6 @@ func NewEmailJob(parentID string, entry *Entry) *EmailExtractJob {
 func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response) (any, []scrapemate.IJob, error) {
 	defer clearResponse(resp)
 
-	log := scrapemate.GetLoggerFromContext(ctx)
-	log.Info("Processing email job", "url", j.URL)
-
-	// Se c'è stato un errore di fetch, termina
 	if resp.Error != nil {
 		return j.Entry, nil, nil
 	}
@@ -49,7 +45,6 @@ func (j *EmailExtractJob) Process(ctx context.Context, resp *scrapemate.Response
 		return j.Entry, nil, nil
 	}
 
-	// Estrai email
 	email := extractEmail(doc, resp.Body)
 	j.Entry.Email = email
 
@@ -60,23 +55,18 @@ func (j *EmailExtractJob) ProcessOnFetchError() bool {
 	return true
 }
 
-// clearResponse elimina riferimenti inutili dalla risposta
 func clearResponse(resp *scrapemate.Response) {
 	resp.Document = nil
 	resp.Body = nil
 }
 
-// extractEmail estrae e valida un'email da un documento HTML o dal body
 func extractEmail(doc *goquery.Document, body []byte) string {
-	// Tenta di estrarre email da `mailto:`
 	emails := findEmailsFromDoc(doc)
 
-	// Se non trovate, usa la regex sul body
 	if len(emails) == 0 {
 		emails = findEmailsFromBody(body)
 	}
 
-	// Ritorna la prima email valida
 	for _, email := range emails {
 		sanitized := sanitizeEmail(email)
 		if isValidEmail(sanitized) {
@@ -87,7 +77,6 @@ func extractEmail(doc *goquery.Document, body []byte) string {
 	return ""
 }
 
-// findEmailsFromDoc estrae le email usando `mailto:`
 func findEmailsFromDoc(doc *goquery.Document) []string {
 	var emails []string
 	doc.Find("a[href^='mailto:']").Each(func(_ int, s *goquery.Selection) {
@@ -99,7 +88,6 @@ func findEmailsFromDoc(doc *goquery.Document) []string {
 	return emails
 }
 
-// findEmailsFromBody estrae email da testo grezzo usando regex o libreria
 func findEmailsFromBody(body []byte) []string {
 	var emails []string
 	addresses := emailaddress.Find(body, false)
@@ -109,12 +97,10 @@ func findEmailsFromBody(body []byte) []string {
 	return emails
 }
 
-// sanitizeEmail rimuove caratteri indesiderati
 func sanitizeEmail(email string) string {
 	return strings.ReplaceAll(email, "%20", "")
 }
 
-// isValidEmail valida un'email
 func isValidEmail(email string) bool {
 	if len(email) > 100 {
 		return false
@@ -123,7 +109,6 @@ func isValidEmail(email string) bool {
 	return err == nil
 }
 
-// Alternativa con regex (se si vuole eliminare la dipendenza da emailaddress)
 var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 
 func findEmailsWithRegex(body []byte) []string {

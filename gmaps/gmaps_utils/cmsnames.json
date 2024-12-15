@@ -1,5 +1,5 @@
 {
-    "WordPress": ["wp-content", "wordpress", "generator.*WordPress", "/wp-json/"],
+    "WordPress": ["wp-content", "wordpress", "generator.*WordPress", "/wp-json/", "/wp-content/", "/wp-includes/", "class=\"wp-*\""],
     "Joomla": ["joomla", "Joomla!", "JoomlaFramework"],
     "Drupal": ["sites/all", "Drupal.settings", "drupal.js"],
     "Magento": ["Magento", "static/frontend"],
@@ -14,7 +14,6 @@
     "PHP-Fusion": ["fusion_core", "php-fusion"],
     "MODX": ["modx"],
     "Contiki CMS": ["contiki", "contiki-cms"],
-    "ExpressionEngine": ["exp:", "expressionengine"],
     "XOOPS": ["xoops", "modules/xoops"],
     "Redaxo": ["redaxo", "/redaxo"],
     "Mambo": ["mambo-server", "mambo.org"],
@@ -23,7 +22,7 @@
     "Squarespace": ["squarespace", "squarespace-assets"],
     "Webnode": ["webnode", "Webnode.com"],
     "Weebly": ["weebly", "weebly.com"],
-    "Duda": ["duda", "duda.co"],
+    "Duda": ["duda", "duda.co", "dudamobile"],
     "Zyro": ["zyro", "zyro.com"],
     "Jimdo": ["jimdo", "jimdo.com"],
     "Contentful": ["contentful.com"],
@@ -43,14 +42,14 @@
     "Shopware": ["shopware", "shopware.com"],
     "Zen Cart": ["zen-cart", "zen-cart.com"],
     "Sitecore": ["sitecore", "sitecore.net"],
-    "Adobe Experience Manager": ["aem", "adobe.com/experience-manager"],
+    "Adobe Experience Manager": [ "adobe.com/experience-manager"],
     "Episerver (Optimizely)": ["episerver", "optimizely.com"],
     "Kentico": ["kentico", "kentico.com", "kentico-cloud"],
     "Umbraco": ["umbraco", "umbraco.com",  "umbraco-cloud"],
     "React": ["react", "react-dom", "reactjs"],
     "Vue": ["vuejs", "vue-loader"],
     "Angular": ["angular", "ng-app", "ng-controller", "angularjs"],
-    "PHP": ["php", "x-powered-by: php", "phpinfo"],
+    "PHP": ["x-powered-by: php", "phpinfo"],
     "ASP.NET": ["asp.net", "x-aspnet-version", ".aspx"],
     "ASP.NET Core": ["asp.net core", "x-powered-by: asp.net core", "blazor"],
     "Django": ["django", "Django"],
@@ -76,5 +75,12 @@
     "Mobirise": ["mobirise", "mobirisesite.com"],
     "Odoo": ["odoo", "odoo.com"],
     "Webflow": ["webflow", "webflow.io"],
-    "Site123": ["site123", "site123.me"]
+    "Site123": ["site123", "site123.me"],
+    "ItaliaOnline": [
+    "iol-website.italiaonline.it",
+    "iol-df.js",
+    "iol-analytics.min.js",
+    "iol-body.np.js",
+    "iol-body.js"
+    ]
 }
