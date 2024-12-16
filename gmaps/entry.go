@@ -257,6 +257,39 @@ func getHostingProviderFromWhois(domain string) (string, error) {
 	return "Sconosciuto", nil
 }
 
+func getHostingProviderWithMultipleNameservers(domain, providerFile string) (string, error) {
+    parsedDomain, err := estraiDominio(domain)
+    if err != nil {
+        return "Sconosciuto", fmt.Errorf("errore durante l'estrazione del dominio: %v", err)
+    }
+
+    nameservers, err := net.LookupNS(parsedDomain)
+    if err != nil {
+        // Fallback a WHOIS
+        return getHostingProviderFromWhois(parsedDomain)
+    }
+
+    var providers []string
+    for _, ns := range nameservers {
+        normalizedNS := normalizeNameserver(ns.Host)
+        hostingProvider, err := identificaHostingDaNameserver(normalizedNS, providerFile)
+        if err == nil && hostingProvider != "Sconosciuto" {
+            providers = append(providers, hostingProvider)
+        } else {
+            // Loggare nameserver non riconosciuti
+            logUnknownNameserver(normalizedNS)
+        }
+    }
+
+    if len(providers) > 0 {
+        // Unisci i provider trovati
+        return strings.Join(providers, ", "), nil
+    }
+
+    // Fallback a WHOIS se nessun nameserver corrisponde
+    return getHostingProviderFromWhois(parsedDomain)
+}
+
 func getHostingProviderWithFile(domain, providerFile string) (string, error) {
     parsedDomain, err := estraiDominio(domain)
     if err != nil {
@@ -282,7 +315,7 @@ func getHostingProviderWithFile(domain, providerFile string) (string, error) {
     }
 
     // Fallback a WHOIS se nessun nameserver corrisponde
-    return getHostingProviderFromWhois(parsedDomain)
+    return getHostingProviderWithMultipleNameservers(domain, providerFile)
 }
 
 func identificaHostingDaNameserver(nameserver, providerFile string) (string, error) {
@@ -294,16 +327,13 @@ func identificaHostingDaNameserver(nameserver, providerFile string) (string, err
     normalizedNS := normalizeNameserver(nameserver)
 
     for key, provider := range providerMapping {
-        // Match diretto
-        if normalizedNS == key || strings.HasSuffix(normalizedNS, key) {
-            return provider, nil
-        }
-
-        // Pattern complessi
-        if strings.Contains(normalizedNS, key) {
+        if normalizedNS == key || strings.HasSuffix(normalizedNS, key) || strings.Contains(normalizedNS, key) {
             return provider, nil
         }
     }
+
+    // Loggare il nameserver sconosciuto
+    logUnknownNameserver(nameserver)
 
     // Fallback a WHOIS
     whoisProvider, whoisErr := getHostingProviderFromWhois(normalizedNS)
@@ -317,6 +347,7 @@ func identificaHostingDaNameserver(nameserver, providerFile string) (string, err
 // Funzione per loggare nameserver sconosciuti per analisi futura
 func logUnknownNameserver(nameserver string) {
     logFile := "unknown_nameservers.log"
+    // Apri il file con i permessi corretti
     file, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
         fmt.Printf("Errore durante l'apertura del file di log: %v\n", err)
@@ -327,6 +358,8 @@ func logUnknownNameserver(nameserver string) {
     logMessage := fmt.Sprintf("Nameserver sconosciuto: %s\n", nameserver)
     if _, err := file.WriteString(logMessage); err != nil {
         fmt.Printf("Errore durante la scrittura nel file di log: %v\n", err)
+    } else {
+        fmt.Printf("Nameserver sconosciuto loggato correttamente: %s\n", nameserver)
     }
 }
 
