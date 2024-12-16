@@ -404,17 +404,18 @@ func normalizeNameserver(nameserver string) string {
     re := regexp.MustCompile(`^(` + strings.Join(prefixes, "|") + `)[\d-]*\.`)
     nameserver = re.ReplaceAllString(nameserver, "")
 
-    // Riduci a dominio principale e TLD
+    // Riduci a dominio principale e TLD solo se ci sono più di due componenti
     parts := strings.Split(nameserver, ".")
     if len(parts) > 2 {
         nameserver = strings.Join(parts[len(parts)-2:], ".")
     }
 
-    // Normalizza i domini AWS specifici per il formato
-    if strings.Contains(nameserver, "awsdns") {
-        parts := strings.Split(nameserver, ".")
-        if len(parts) > 2 {
-            nameserver = fmt.Sprintf("%s.%s", parts[len(parts)-2], parts[len(parts)-1])
+    // Se il risultato è troppo generico, ritorna il nameserver originale
+    invalidPatterns := []string{"co.uk", "com", "org", "net"}
+    for _, pattern := range invalidPatterns {
+        if nameserver == pattern {
+            fmt.Printf("Nameserver troppo generico dopo normalizzazione: %s. Restituito originale: %s\n", nameserver, nameserver)
+            return strings.TrimSuffix(nameserver, ".")
         }
     }
 
