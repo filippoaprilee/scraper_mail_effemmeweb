@@ -344,6 +344,11 @@ func identificaHostingDaNameserver(nameserver, domain, providerFile string) (str
         }
     }
 
+    // Gestione esplicita per AWS
+    if strings.Contains(nameserver, "awsdns") {
+        return "Amazon Web Services", nil
+    }
+
     // Loggare il nameserver sconosciuto insieme al dominio
     logUnknownNameserver(nameserver, domain)
 
@@ -380,6 +385,11 @@ func logUnknownNameserver(nameserver, domain string) {
         whoisProvider = "Non disponibile"
     }
 
+    // Identificazione AWS o altri provider tramite pattern
+    if strings.Contains(nameserver, "awsdns") {
+        whoisProvider = "Amazon Web Services"
+    }
+
     // Costruisci il messaggio di log
     logMessage := fmt.Sprintf(
         "Nameserver sconosciuto: %s (dominio: %s)\n  Reverse DNS: %s\n  WHOIS Provider: %s\n",
@@ -398,6 +408,11 @@ func logUnknownNameserver(nameserver, domain string) {
 func normalizeNameserver(nameserver string) string {
     // Rimuove eventuali punti finali
     nameserver = strings.TrimSuffix(nameserver, ".")
+
+    // Specifica gestione per AWS
+    if strings.Contains(nameserver, "awsdns") {
+        return "Amazon Web Services"
+    }
 
     // Rimuove prefissi comuni
     prefixes := []string{"ns", "dns", "ns-cloud", "awsdns"}
