@@ -368,8 +368,23 @@ func logUnknownNameserver(nameserver, domain string) {
     }
     defer file.Close()
 
-    // Costruisci il messaggio di log con il nameserver e il dominio
-    logMessage := fmt.Sprintf("Nameserver sconosciuto: %s (dominio: %s)\n", nameserver, domain)
+    // Reverse DNS Lookup
+    reverseDNS, err := net.LookupAddr(nameserver)
+    if err != nil || len(reverseDNS) == 0 {
+        reverseDNS = []string{"Non disponibile"}
+    }
+
+    // WHOIS Lookup
+    whoisProvider, whoisErr := getHostingProviderFromWhois(nameserver)
+    if whoisErr != nil {
+        whoisProvider = "Non disponibile"
+    }
+
+    // Costruisci il messaggio di log
+    logMessage := fmt.Sprintf(
+        "Nameserver sconosciuto: %s (dominio: %s)\n  Reverse DNS: %s\n  WHOIS Provider: %s\n",
+        nameserver, domain, strings.Join(reverseDNS, ", "), whoisProvider,
+    )
 
     // Scrivi il messaggio nel file
     if _, err := file.WriteString(logMessage); err != nil {
@@ -384,26 +399,23 @@ func normalizeNameserver(nameserver string) string {
     // Rimuove eventuali punti finali
     nameserver = strings.TrimSuffix(nameserver, ".")
 
-    // Pattern specifici da ignorare
-    excludePatterns := []string{"co.uk", "awsdns"}
-
-    // Controlla se il nameserver corrisponde ai pattern esclusi
-    for _, pattern := range excludePatterns {
-        if strings.Contains(nameserver, pattern) {
-            fmt.Printf("Excluded nameserver: %s\n", nameserver)
-            return nameserver
-        }
-    }
-
     // Rimuove prefissi comuni
     prefixes := []string{"ns", "dns", "ns-cloud", "awsdns"}
     re := regexp.MustCompile(`^(` + strings.Join(prefixes, "|") + `)[\d-]*\.`)
     nameserver = re.ReplaceAllString(nameserver, "")
 
-    // Se il nameserver contiene più di due parti, restituisci solo dominio principale e TLD
+    // Riduci a dominio principale e TLD
     parts := strings.Split(nameserver, ".")
     if len(parts) > 2 {
         nameserver = strings.Join(parts[len(parts)-2:], ".")
+    }
+
+    // Normalizza i domini AWS specifici per il formato
+    if strings.Contains(nameserver, "awsdns") {
+        parts := strings.Split(nameserver, ".")
+        if len(parts) > 2 {
+            nameserver = fmt.Sprintf("%s.%s", parts[len(parts)-2], parts[len(parts)-1])
+        }
     }
 
     fmt.Printf("Normalized nameserver: %s\n", nameserver)
