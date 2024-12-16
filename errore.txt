@@ -1,0 +1,111 @@
+Recovered from panic: [launcher] Failed to get the debug url: [102049:102049:1216/130445.425099:FATAL:zygote_host_impl_linux.cc(126)] No usable sandbox! Update your kernel or see https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md for more information on developing with the SUID sandbox. If you want to live dangerously and need an immediate workaround, you can try using --no-sandbox.
+#0 0x569db5c6e662 base::debug::CollectStackTrace()
+#1 0x569db5c5bb5e base::debug::StackTrace::StackTrace()
+#2 0x569db5bb267a logging::LogMessage::Flush()
+#3 0x569db5bb3239 logging::LogMessageFatal::~LogMessageFatal()
+#4 0x569db3e4b4ee content::ZygoteHostImpl::Init()
+#5 0x569db5028afc content::ContentMainRunnerImpl::Initialize()
+#6 0x569db5026749 content::RunContentProcess()
+#7 0x569db5026ba7 content::ContentMain()
+#8 0x569db0d80370 ChromeMain
+#9 0x7f7ef802a3b8 (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a3b7)
+#10 0x7f7ef802a47b __libc_start_main
+#11 0x569db0d8002a _start
+Crash keys:
+  "switch-28" = "--use-angle=swiftshader-webgl"
+  "switch-27" = "--ozone-override-screen-size=800,600"
+  "switch-26" = "--ozone-platform=headless"
+  "switch-25" = "--noerrdialogs"
+  "switch-24" = "--user-data-dir=/tmp/rod/user-data/46d0c7fac6a5b882"
+  "switch-23" = "--use-mock-keychain"
+  "switch-22" = "--remote-debugging-port=0"
+  "switch-21" = "--no-startup-window"
+  "switch-20" = "--no-first-run"
+  "switch-19" = "--metrics-recording-only"
+  "switch-18" = "--headless"
+  "switch-17" = "--force-color-profile=srgb"
+  "switch-16" = "--enable-automation"
+  "switch-15" = "--disable-sync"
+  "switch-14" = "--disable-site-isolation-trials"
+  "switch-13" = "--disable-renderer-backgrounding"
+  "switch-12" = "--disable-prompt-on-repost"
+  "switch-11" = "--disable-popup-blocking"
+  "switch-10" = "--disable-ipc-flooding-protection"
+  "switch-9" = "--disable-hang-monitor"
+  "switch-8" = "--disable-dev-shm-usage"
+  "switch-7" = "--disable-default-apps"
+  "switch-6" = "--disable-component-extensions-with-background-pages"
+  "switch-5" = "--disable-client-side-phishing-detection"
+  "switch-4" = "--disable-breakpad"
+  "switch-3" = "--disable-backgrounding-occluded-windows"
+  "switch-2" = "--disable-background-timer-throttling"
+  "switch-1" = "--disable-background-networking"
+  "num-switches" = "30"
+  "commandline-disabled-feature-2" = "TranslateUI"
+  "commandline-disabled-feature-1" = "site-per-process"
+  "commandline-enabled-feature-2" = "NetworkServiceInProcess"
+  "commandline-enabled-feature-1" = "NetworkService"
+  "osarch" = "x86_64"
+  "pid" = "102049"
+  "ptype" = "browser"
+
+Received signal 6
+#0 0x569db5c6e662 base::debug::CollectStackTrace()
+#1 0x569db5c5bb5e base::debug::StackTrace::StackTrace()
+#2 0x569db5c6e071 base::debug::(anonymous namespace)::StackDumpSignalHandler()
+#3 0x7f7ef8045250 (/usr/lib/x86_64-linux-gnu/libc.so.6+0x4524f)
+#4 0x7f7ef80a3f1c pthread_kill
+#5 0x7f7ef804519e gsignal
+#6 0x7f7ef8028902 abort
+#7 0x569db5c4f7d5 base::debug::BreakDebuggerAsyncSafe()
+#8 0x569db5bb31c4 base::RepeatingCallback<>::Run()
+#9 0x569db5bb305d logging::LogMessage::HandleFatal()
+#10 0x569db5bb2c74 logging::LogMessage::Flush()
+#11 0x569db5bb3239 logging::LogMessageFatal::~LogMessageFatal()
+#12 0x569db3e4b4ee content::ZygoteHostImpl::Init()
+#13 0x569db5028afc content::ContentMainRunnerImpl::Initialize()
+#14 0x569db5026749 content::RunContentProcess()
+#15 0x569db5026ba7 content::ContentMain()
+#16 0x569db0d80370 ChromeMain
+#17 0x7f7ef802a3b8 (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a3b7)
+#18 0x7f7ef802a47b __libc_start_main
+#19 0x569db0d8002a _start
+  r8: 0000104c0030bd6d  r9: 0000000000000880 r10: 0000000000000008 r11: 0000000000000246
+ r12: 0000000000000006 r13: 0000000000000125 r14: 0000000000000016 r15: 00007ffda1679af8
+  di: 0000000000018ea1  si: 0000000000018ea1  bp: 00007ffda1679940  bx: 0000000000018ea1
+  dx: 0000000000000006  ax: 0000000000000000  cx: 00007f7ef80a3f1c  sp: 00007ffda1679900
+  ip: 00007f7ef80a3f1c efl: 0000000000000246 cgf: 002b000000000033 erf: 0000000000000000
+ trp: 0000000000000000 msk: 0000000000000000 cr2: 0000000000000000
+[end of stack trace]
+
+Stack: goroutine 153 [running]:
+runtime/debug.Stack()
+	/usr/local/go/src/runtime/debug/stack.go:26 +0x5e
+github.com/gosom/google-maps-scraper/gmaps.EntryFromJSON.func1()
+	/home/effemmeweb/scraper_mail_effemmeweb/gmaps/entry.go:871 +0x34
+panic({0xb3e6e0?, 0xc000ce0d00?})
+	/usr/local/go/src/runtime/panic.go:785 +0x132
+github.com/go-rod/rod/lib/utils.init.func2({0xb3e6e0?, 0xc000ce0d00?})
+	/home/effemmeweb/go/pkg/mod/github.com/go-rod/rod@v0.116.2/lib/utils/utils.go:68 +0x1d
+github.com/gosom/google-maps-scraper/gmaps.dynamicAnalysis.New.(*Browser).WithPanic.genE.func2({0xc000ce0d10?, 0x40d745?, 0x10?})
+	/home/effemmeweb/go/pkg/mod/github.com/go-rod/rod@v0.116.2/must.go:36 +0x62
+github.com/go-rod/rod.(*Browser).MustConnect(0xc000f706c0)
+	/home/effemmeweb/go/pkg/mod/github.com/go-rod/rod@v0.116.2/must.go:51 +0x7f
+github.com/gosom/google-maps-scraper/gmaps.dynamicAnalysis({0xc000726d20, 0x24}, 0xc0004f3e30)
+	/home/effemmeweb/scraper_mail_effemmeweb/gmaps/entry.go:603 +0x2f3
+github.com/gosom/google-maps-scraper/gmaps.detectTechnology({0xc000726d20, 0x24}, 0xc0004f3e30)
+	/home/effemmeweb/scraper_mail_effemmeweb/gmaps/entry.go:470 +0x8a
+github.com/gosom/google-maps-scraper/gmaps.EntryFromJSON({_, _, _}, {_, _}, {_, _}, {_, _})
+	/home/effemmeweb/scraper_mail_effemmeweb/gmaps/entry.go:950 +0x5f2
+github.com/gosom/google-maps-scraper/gmaps.(*PlaceJob).Process(0xc000fb52c0, {0xe0?, 0xc8?}, 0x0?)
+	/home/effemmeweb/scraper_mail_effemmeweb/gmaps/place.go:52 +0xf3
+github.com/gosom/scrapemate.(*ScrapeMate).DoJob(0xc00054a0e0, {0xfbeb70, 0xc00014c5f0}, {0xfc32a0, 0xc000fb52c0})
+	/home/effemmeweb/go/pkg/mod/github.com/gosom/scrapemate@v0.8.2/scrapemate.go:387 +0x815
+github.com/gosom/scrapemate.(*ScrapeMate).startWorker(0xc00054a0e0, {0xfbeb70, 0xc00014c5f0})
+	/home/effemmeweb/go/pkg/mod/github.com/gosom/scrapemate@v0.8.2/scrapemate.go:545 +0x14d
+github.com/gosom/scrapemate.(*ScrapeMate).Start.func2()
+	/home/effemmeweb/go/pkg/mod/github.com/gosom/scrapemate@v0.8.2/scrapemate.go:230 +0x4f
+created by github.com/gosom/scrapemate.(*ScrapeMate).Start in goroutine 63
+	/home/effemmeweb/go/pkg/mod/github.com/gosom/scrapemate@v0.8.2/scrapemate.go:227 +0x17e
+
+{"level":"info","component":"scrapemate","job":"Job{ID: 6ac4f3d2-f5db-4b04-b543-a63c0d8abed
