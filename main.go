@@ -604,6 +604,7 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
         return "", fmt.Errorf("errore durante la creazione del file CSV per la categoria %s: %v", category, err)
     }
     defer output.Close()
+    
 
     csvWriter := csv.NewWriter(output)
     defer csvWriter.Flush()
@@ -618,9 +619,17 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
         return "", fmt.Errorf("errore durante la scrittura dell'intestazione nel file CSV: %v", err)
     }
 
+    // File VCF
+    vcfFileName := fmt.Sprintf("%s/numeriditelefono_%s_%s.vcf", csvDir, category, currentTime)
+    vcfFile, err := os.Create(vcfFileName)
+    if err != nil {
+        return "", fmt.Errorf("errore durante la creazione del file VCF per la categoria %s: %v", category, err)
+    }
+    defer vcfFile.Close()
+
     // Configura lo scraping per la categoria specifica
     writers := []scrapemate.ResultWriter{
-        NewCustomCsvWriter(csvWriter),
+        NewCustomCsvWriterWithVCF(csvWriter, vcfFile),
     }
 
     opts := []func(*scrapemateapp.Config) error{
@@ -1326,20 +1335,36 @@ func convertToJobs(keywordJobs []*gmaps.GmapJob) []scrapemate.IJob {
     return jobs
 }
 
-type customCsvWriter struct {
-    writer *csv.Writer
-    emails map[string]bool
-    phones map[string]bool
-    names  map[string]bool
+func writeVCF(vcfFile *os.File, name, phone string) error {
+    // Rimuovi tutti gli spazi dal numero di telefono
+    trimmedPhone := strings.ReplaceAll(phone, " ", "")
+    
+    vcfContact := fmt.Sprintf(
+        "BEGIN:VCARD\nVERSION:3.0\nFN:%s\nTEL;TYPE=CELL:%s\nEND:VCARD\n",
+        name,
+        trimmedPhone,
+    )
+    _, err := vcfFile.WriteString(vcfContact)
+    return err
 }
 
-func NewCustomCsvWriter(w *csv.Writer) scrapemate.ResultWriter {
-    return &customCsvWriter{
-        writer: w,
-        emails: make(map[string]bool),
-        phones: make(map[string]bool),
-        names:  make(map[string]bool),
-    }
+func NewCustomCsvWriterWithVCF(w *csv.Writer, vcfFile *os.File) scrapemate.ResultWriter {
+	return &customCsvWriter{
+		writer:   w,
+		vcfFile:  vcfFile,
+		emails:   make(map[string]bool),
+		phones:   make(map[string]bool),
+		names:    make(map[string]bool),
+	}
+}
+
+// Aggiorna la struttura per includere il file `.vcf`
+type customCsvWriter struct {
+	writer  *csv.Writer
+	vcfFile *os.File
+	emails  map[string]bool
+	phones  map[string]bool
+	names   map[string]bool
 }
 
 func (cw *customCsvWriter) WriteResult(result scrapemate.Result) error {
@@ -1427,6 +1452,13 @@ func (cw *customCsvWriter) WriteResult(result scrapemate.Result) error {
     if len(record) != expectedFields {
         fmt.Printf("Riga scartata (numero di campi errato): %v\n", record)
         return nil
+    }
+
+    if phone != "" {
+        // Scrivi il contatto nel file VCF
+        if err := writeVCF(cw.vcfFile, name, phone); err != nil {
+            fmt.Printf("Errore durante la scrittura del contatto VCF: %v\n", err)
+        }
     }
 
     // Scrivi la riga nel CSV

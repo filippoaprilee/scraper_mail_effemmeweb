@@ -326,8 +326,10 @@ func identificaHostingDaNameserver(nameserver, providerFile string) (string, err
 
     normalizedNS := normalizeNameserver(nameserver)
 
+    // Controlla il mapping esistente
     for key, provider := range providerMapping {
-        if normalizedNS == key || strings.HasSuffix(normalizedNS, key) || strings.Contains(normalizedNS, key) {
+        // Usa Contains per gestire i pattern come "awsdns-*"
+        if strings.Contains(normalizedNS, key) {
             return provider, nil
         }
     }
@@ -366,7 +368,7 @@ func logUnknownNameserver(nameserver string) {
 // Funzione per normalizzare il nameserver (rimuovendo prefissi come "ns-cloud-")
 func normalizeNameserver(nameserver string) string {
     prefixes := []string{"ns", "dns", "ns-cloud", "awsdns"}
-    re := regexp.MustCompile(`^(` + strings.Join(prefixes, "|") + `)\d*[-.]?`)
+    re := regexp.MustCompile(`^(` + strings.Join(prefixes, "|") + `)[\d-]*\.`)
     nameserver = re.ReplaceAllString(nameserver, "")
 
     nameserver = strings.TrimSuffix(nameserver, ".")
