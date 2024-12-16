@@ -202,17 +202,17 @@ func getPageSpeedScores(url string) (int, int, float64, error) {
     return mobilePerformance, desktopPerformance, seoScore, nil
 }
 
-func loadProviderMapping(filename string) (map[string]string, error) {
+func loadProviderMapping(filename string) (map[string]string, map[string]*regexp.Regexp, error) {
     file, err := os.Open(filename)
     if err != nil {
-        return nil, fmt.Errorf("Errore nell'aprire il file %s: %v", filename, err)
+        return nil, nil, fmt.Errorf("Errore nell'aprire il file %s: %v", filename, err)
     }
     defer file.Close()
 
     providerMapping := make(map[string]string)
     decoder := json.NewDecoder(file)
     if err := decoder.Decode(&providerMapping); err != nil {
-        return nil, fmt.Errorf("Errore nella decodifica del file JSON %s: %v", filename, err)
+        return nil, nil, fmt.Errorf("Errore nella decodifica del file JSON %s: %v", filename, err)
     }
 
     // Compila i wildcard per uso successivo
@@ -222,7 +222,7 @@ func loadProviderMapping(filename string) (map[string]string, error) {
         compiledMapping[pattern] = regexp.MustCompile("^" + regexPattern + "$")
     }
 
-    return providerMapping, nil
+    return providerMapping, compiledMapping, nil
 }
 
 // Usa WHOIS per ottenere informazioni sul dominio
@@ -239,29 +239,19 @@ func getHostingProviderFromWhois(domain string) (string, error) {
 
     data := resp.String()
 
-    // Cerca informazioni comuni sui provider
     commonProviders := map[string]string{
         "Cloudflare": "Cloudflare",
         "Amazon":     "Amazon Web Services",
         "AWS":        "Amazon Web Services",
         "Microsoft":  "Microsoft Azure",
+        "Google":     "Google Cloud",
+        "Aruba":      "Aruba Hosting",
+        "Keliweb":    "Keliweb",
     }
 
     for key, provider := range commonProviders {
         if strings.Contains(data, key) {
             return provider, nil
-        }
-    }
-
-    // Cerca i nameserver nei dati WHOIS
-    re := regexp.MustCompile(`(?i)nameserver:\s*([a-zA-Z0-9.-]+)`)
-    matches := re.FindAllStringSubmatch(data, -1)
-    if len(matches) > 0 {
-        for _, match := range matches {
-            ns := match[1]
-            normalizedNS := normalizeNameserver(ns)
-            fmt.Printf("Nameserver estratto da WHOIS: %s\n", normalizedNS)
-            return fmt.Sprintf("Possibile provider: %s", normalizedNS), nil
         }
     }
 
@@ -307,10 +297,8 @@ func getHostingProviderWithFile(domain, providerFile string) (string, error) {
         return "Sconosciuto", fmt.Errorf("errore durante l'estrazione del dominio: %v", err)
     }
 
-    // Lookup dei nameserver
     nameservers, err := net.LookupNS(parsedDomain)
     if err != nil {
-        // Se il lookup fallisce, prova direttamente WHOIS
         return getHostingProviderFromWhois(parsedDomain)
     }
 
@@ -318,39 +306,28 @@ func getHostingProviderWithFile(domain, providerFile string) (string, error) {
         normalizedNS := normalizeNameserver(ns.Host)
         hostingProvider, err := identificaHostingDaNameserver(normalizedNS, parsedDomain, providerFile)
         if err == nil && hostingProvider != "Sconosciuto" {
-            fmt.Printf("Hosting provider found: %s for NS: %s\n", hostingProvider, normalizedNS)
             return hostingProvider, nil
         }
     }
 
-    // Fallback a WHOIS se nessun nameserver corrisponde
-    return getHostingProviderWithMultipleNameservers(domain, providerFile)
+    return getHostingProviderFromWhois(parsedDomain)
 }
 
 func identificaHostingDaNameserver(nameserver, domain, providerFile string) (string, error) {
-    providerMapping, err := loadProviderMapping(providerFile)
+    providerMapping, compiledMapping, err := loadProviderMapping(providerFile)
     if err != nil {
-        return "Sconosciuto", fmt.Errorf("Errore nel caricare la mappa dei provider: %v", err)
+        // Restituisci i valori richiesti
+        return "Sconosciuto", fmt.Errorf("errore nel caricamento del provider file: %v", err)
     }
 
     normalizedNS := normalizeNameserver(nameserver)
 
-    // Controlla il mapping esistente con wildcard
-    for key, provider := range providerMapping {
-        regexPattern := strings.ReplaceAll(key, "*", ".*")
-        match, _ := regexp.MatchString("^"+regexPattern+"$", normalizedNS)
-        if match {
-            return provider, nil
+    // Cerca nel file JSON con regex compilate
+    for key, regex := range compiledMapping {
+        if regex.MatchString(normalizedNS) {
+            return providerMapping[key], nil
         }
     }
-
-    // Gestione esplicita per AWS
-    if strings.Contains(nameserver, "awsdns") {
-        return "Amazon Web Services", nil
-    }
-
-    // Loggare il nameserver sconosciuto insieme al dominio
-    logUnknownNameserver(nameserver, domain)
 
     // Fallback a WHOIS
     whoisProvider, whoisErr := getHostingProviderFromWhois(normalizedNS)
@@ -358,6 +335,14 @@ func identificaHostingDaNameserver(nameserver, domain, providerFile string) (str
         return whoisProvider, nil
     }
 
+    // Fallback con Reverse DNS
+    reverseDNS, _ := net.LookupAddr(normalizedNS)
+    if len(reverseDNS) > 0 {
+        return fmt.Sprintf("Reverse DNS: %s", reverseDNS[0]), nil
+    }
+
+    // Log nameserver sconosciuto e restituisci "Sconosciuto"
+    logUnknownNameserver(nameserver, domain)
     return "Sconosciuto", nil
 }
 
@@ -365,7 +350,6 @@ func identificaHostingDaNameserver(nameserver, domain, providerFile string) (str
 func logUnknownNameserver(nameserver, domain string) {
     logFile := "unknown_nameservers.log"
 
-    // Apri il file con i permessi corretti
     file, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
     if err != nil {
         fmt.Printf("Errore durante l'apertura del file di log: %v\n", err)
@@ -373,68 +357,29 @@ func logUnknownNameserver(nameserver, domain string) {
     }
     defer file.Close()
 
-    // Reverse DNS Lookup
-    reverseDNS, err := net.LookupAddr(nameserver)
-    if err != nil || len(reverseDNS) == 0 {
-        reverseDNS = []string{"Non disponibile"}
-    }
+    normalizedNS := normalizeNameserver(nameserver)
+    whoisProvider, _ := getHostingProviderFromWhois(nameserver)
 
-    // WHOIS Lookup
-    whoisProvider, whoisErr := getHostingProviderFromWhois(nameserver)
-    if whoisErr != nil {
-        whoisProvider = "Non disponibile"
-    }
-
-    // Identificazione AWS o altri provider tramite pattern
-    if strings.Contains(nameserver, "awsdns") {
-        whoisProvider = "Amazon Web Services"
-    }
-
-    // Costruisci il messaggio di log
     logMessage := fmt.Sprintf(
-        "Nameserver sconosciuto: %s (dominio: %s)\n  Reverse DNS: %s\n  WHOIS Provider: %s\n",
-        nameserver, domain, strings.Join(reverseDNS, ", "), whoisProvider,
+        "Nameserver sconosciuto: %s (dominio: %s)\n  Normalizzato: %s\n  WHOIS Provider: %s\n",
+        nameserver, domain, normalizedNS, whoisProvider,
     )
 
-    // Scrivi il messaggio nel file
     if _, err := file.WriteString(logMessage); err != nil {
         fmt.Printf("Errore durante la scrittura nel file di log: %v\n", err)
-    } else {
-        fmt.Printf("Nameserver sconosciuto loggato correttamente: %s (dominio: %s)\n", nameserver, domain)
     }
 }
 
 // Funzione per normalizzare il nameserver (rimuovendo prefissi come "ns-cloud-")
 func normalizeNameserver(nameserver string) string {
-    // Rimuove eventuali punti finali
     nameserver = strings.TrimSuffix(nameserver, ".")
 
-    // Specifica gestione per AWS
-    if strings.Contains(nameserver, "awsdns") {
-        return "Amazon Web Services"
-    }
-
-    // Rimuove prefissi comuni
-    prefixes := []string{"ns", "dns", "ns-cloud", "awsdns"}
-    re := regexp.MustCompile(`^(` + strings.Join(prefixes, "|") + `)[\d-]*\.`)
-    nameserver = re.ReplaceAllString(nameserver, "")
-
-    // Riduci a dominio principale e TLD solo se ci sono più di due componenti
+    // Mantieni solo gli ultimi due livelli del dominio
     parts := strings.Split(nameserver, ".")
     if len(parts) > 2 {
         nameserver = strings.Join(parts[len(parts)-2:], ".")
     }
 
-    // Se il risultato è troppo generico, ritorna il nameserver originale
-    invalidPatterns := []string{"co.uk", "com", "org", "net"}
-    for _, pattern := range invalidPatterns {
-        if nameserver == pattern {
-            fmt.Printf("Nameserver troppo generico dopo normalizzazione: %s. Restituito originale: %s\n", nameserver, nameserver)
-            return strings.TrimSuffix(nameserver, ".")
-        }
-    }
-
-    fmt.Printf("Normalized nameserver: %s\n", nameserver)
     return nameserver
 }
 
@@ -777,7 +722,7 @@ func checkSiteAvailability(url string) (string, error) {
         return "No - Errore dopo vari tentativi", lastError
     }
 
-    return "No - Stato Non Determinato", nil
+    return "Stato Non Determinato", nil
 }
 
 func checkSiteMaintenance(html string) string {
