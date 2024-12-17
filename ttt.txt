@@ -1103,3 +1103,12 @@ getHostingProviderWithFile
 identificaHostingDaNameserver
 logUnknownNameserver
 normalizeNameserver
+
+
+In casi estermi integra anche
+https://github.com/ns3777k/go-shodan
+
+con
+import "github.com/ns3777k/go-shodan/v4/shodan"	// with go modules enabled (GO111MODULE=on or outside GOPATH)
+import "github.com/ns3777k/go-shodan/shodan" // with go modules disabled
+
