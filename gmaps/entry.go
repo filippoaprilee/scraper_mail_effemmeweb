@@ -810,18 +810,6 @@ func checkSiteMaintenance(html string) string {
 		}
 	}
 
-	// Cerca anche nel tag <body> per altre parole chiave
-	reBody := regexp.MustCompile(`<body.*?>(.*?)<\/body>`)
-	bodyMatch := reBody.FindStringSubmatch(html)
-	if len(bodyMatch) > 1 {
-		bodyContent := bodyMatch[1]
-		for _, keyword := range maintenanceKeywords {
-			if strings.Contains(strings.ToLower(bodyContent), keyword) {
-				return "Sì"
-			}
-		}
-	}
-
 	return "No"
 }
 
