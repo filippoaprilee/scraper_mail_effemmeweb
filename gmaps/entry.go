@@ -788,7 +788,7 @@ func checkSiteMaintenance(html string) string {
 	// Parole chiave comuni per indicare manutenzione o costruzione
 	maintenanceKeywords := []string{
 		"in costruzione", "manutenzione", "under construction", "maintenance mode",
-		"work in progress", "coming soon", "site under maintenance", "temporarily unavailable",
+		"site under maintenance", "temporarily unavailable",
 	}
 
 	// Cerca parole chiave nel contenuto HTML (corpo della pagina)
@@ -805,6 +805,18 @@ func checkSiteMaintenance(html string) string {
 		title := match[1]
 		for _, keyword := range maintenanceKeywords {
 			if strings.Contains(title, keyword) {
+				return "Sì"
+			}
+		}
+	}
+
+    // Cerca anche nel tag <body> per altre parole chiave
+	reBody := regexp.MustCompile(`<body.*?>(.*?)<\/body>`)
+	bodyMatch := reBody.FindStringSubmatch(html)
+	if len(bodyMatch) > 1 {
+		bodyContent := bodyMatch[1]
+		for _, keyword := range maintenanceKeywords {
+			if strings.Contains(strings.ToLower(bodyContent), keyword) {
 				return "Sì"
 			}
 		}
@@ -1031,32 +1043,44 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile, providerFile string) (Entry
 
 // isExcludedWebsite verifica se il sito web deve essere escluso
 func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
+    // Helper per rimuovere www.
+    removeWWW := func(domain string) string {
+        return strings.TrimPrefix(domain, "www.")
+    }
+
     // Estrai il dominio principale dall'URL
     domain, err := estraiDominio(url)
     if err != nil {
         return false // Se non riesce a estrarre il dominio, considera il sito non escluso
     }
 
-    // Verifica contro i domini del file JSON
+    // Controlla se il dominio è nella lista esclusa
     if _, found := excludedWebsites[domain]; found {
         fmt.Printf("Sito escluso (file JSON): %s\n", url)
         return true
     }
 
+    // Rimuovi www. e controlla nuovamente
+    domainWithoutWWW := removeWWW(domain)
+    if _, found := excludedWebsites[domainWithoutWWW]; found {
+        fmt.Printf("Sito escluso (senza www): %s\n", url)
+        return true
+    }
+
     // Verifica contro domini social o prefissi
-    if isSocialOrSpecificDomain(domain) {
+    if isSocialOrSpecificDomain(domain) || isSocialOrSpecificDomain(domainWithoutWWW) {
         fmt.Printf("Sito escluso (social o specifico): %s\n", url)
         return true
     }
 
     // Verifica contro domini con prefissi specifici
-    if hasForbiddenPrefix(domain) {
+    if hasForbiddenPrefix(domain) || hasForbiddenPrefix(domainWithoutWWW) {
         fmt.Printf("Sito escluso (prefisso): %s\n", url)
         return true
     }
 
     // Verifica contro estensioni particolari
-    if hasForbiddenExtension(domain) {
+    if hasForbiddenExtension(domain) || hasForbiddenExtension(domainWithoutWWW) {
         fmt.Printf("Sito escluso (estensione): %s\n", url)
         return true
     }
