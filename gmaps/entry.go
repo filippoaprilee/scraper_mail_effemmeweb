@@ -13,10 +13,12 @@ import (
 	"net"
 	"strconv"
 	"os"
+    "context"
 	
 	"github.com/go-rod/rod"
     "github.com/go-rod/rod/lib/proto"
     "github.com/domainr/whois"
+    "github.com/ns3777k/go-shodan/v4/shodan"
 )
 // "github.com/PuerkitoBio/goquery"
 // "github.com/domainr/whois"
@@ -227,35 +229,32 @@ func loadProviderMapping(filename string) (map[string]string, map[string]*regexp
 
 // Usa WHOIS per ottenere informazioni sul dominio
 func getHostingProviderFromWhois(domain string) (string, error) {
-    req, err := whois.NewRequest(domain)
-    if err != nil {
-        return "Analisi non completata", fmt.Errorf("Errore nella creazione della richiesta WHOIS: %v", err)
-    }
+	req, err := whois.NewRequest(domain)
+	if err != nil {
+		return "Sconosciuto", fmt.Errorf("errore WHOIS: %v", err)
+	}
 
-    resp, err := whois.DefaultClient.Fetch(req)
-    if err != nil {
-        return "Analisi non completata", fmt.Errorf("Errore durante la richiesta WHOIS: %v", err)
-    }
+	resp, err := whois.DefaultClient.Fetch(req)
+	if err != nil {
+		return "Sconosciuto", fmt.Errorf("errore durante richiesta WHOIS: %v", err)
+	}
 
-    data := resp.String()
+	data := resp.String()
+	commonProviders := map[string]string{
+		"Cloudflare": "Cloudflare",
+		"Amazon":     "Amazon Web Services",
+		"Microsoft":  "Microsoft Azure",
+		"Google":     "Google Cloud",
+		"Aruba":      "Aruba Hosting",
+	}
 
-    commonProviders := map[string]string{
-        "Cloudflare": "Cloudflare",
-        "Amazon":     "Amazon Web Services",
-        "AWS":        "Amazon Web Services",
-        "Microsoft":  "Microsoft Azure",
-        "Google":     "Google Cloud",
-        "Aruba":      "Aruba Hosting",
-        "Keliweb":    "Keliweb",
-    }
+	for key, provider := range commonProviders {
+		if strings.Contains(data, key) {
+			return provider, nil
+		}
+	}
 
-    for key, provider := range commonProviders {
-        if strings.Contains(data, key) {
-            return provider, nil
-        }
-    }
-
-    return "Sconosciuto", nil
+	return "Sconosciuto", nil
 }
 
 func getHostingProviderWithMultipleNameservers(domain, providerFile string) (string, error) {
@@ -292,58 +291,100 @@ func getHostingProviderWithMultipleNameservers(domain, providerFile string) (str
 }
 
 func getHostingProviderWithFile(domain, providerFile string) (string, error) {
-    parsedDomain, err := estraiDominio(domain)
-    if err != nil {
-        return "Sconosciuto", fmt.Errorf("errore durante l'estrazione del dominio: %v", err)
-    }
+	parsedDomain, err := estraiDominio(domain)
+	if err != nil {
+		return "Sconosciuto", fmt.Errorf("errore durante l'estrazione del dominio: %v", err)
+	}
 
-    nameservers, err := net.LookupNS(parsedDomain)
-    if err != nil {
-        return getHostingProviderFromWhois(parsedDomain)
-    }
+	// Risoluzione IP
+	ipAddress, err := resolveIP(parsedDomain)
+	if err != nil {
+		ipAddress = "IP non risolto"
+	}
 
-    for _, ns := range nameservers {
-        normalizedNS := normalizeNameserver(ns.Host)
-        hostingProvider, err := identificaHostingDaNameserver(normalizedNS, parsedDomain, providerFile)
-        if err == nil && hostingProvider != "Sconosciuto" {
-            return hostingProvider, nil
-        }
-    }
+	// Chiamata a IP-API per ottenere il provider di hosting tramite IP
+	if ipAddress != "IP non risolto" {
+		if provider, err := getHostingFromIPAPI(ipAddress); err == nil {
+			return provider, nil
+		}
+	}
 
-    return getHostingProviderFromWhois(parsedDomain)
+	// Lookup NS e verifica tramite file JSON
+	nameservers, err := net.LookupNS(parsedDomain)
+	if err != nil {
+		return getHostingProviderFromWhois(parsedDomain)
+	}
+
+	for _, ns := range nameservers {
+		normalizedNS := normalizeNameserver(ns.Host)
+		hostingProvider, err := identificaHostingDaNameserver(normalizedNS, parsedDomain, providerFile)
+		if err == nil && hostingProvider != "Sconosciuto" {
+			return hostingProvider, nil
+		}
+	}
+
+	// Fallback a WHOIS
+	return getHostingProviderFromWhois(parsedDomain)
 }
 
+func resolveIP(domain string) (string, error) {
+	ips, err := net.LookupIP(domain)
+	if err != nil {
+		return "", fmt.Errorf("errore risoluzione IP: %v", err)
+	}
+	if len(ips) > 0 {
+		return ips[0].String(), nil
+	}
+	return "", fmt.Errorf("IP non trovato")
+}
+
+func getHostingFromIPAPI(ip string) (string, error) {
+	url := fmt.Sprintf("http://ip-api.com/json/%s", ip)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("errore richiesta IP-API: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", fmt.Errorf("errore parsing JSON IP-API: %v", err)
+	}
+
+	if data["status"] == "success" {
+		if provider, ok := data["isp"].(string); ok {
+			return provider, nil
+		}
+	}
+
+	return "Sconosciuto", nil
+}
+
+
 func identificaHostingDaNameserver(nameserver, domain, providerFile string) (string, error) {
-    providerMapping, compiledMapping, err := loadProviderMapping(providerFile)
-    if err != nil {
-        // Restituisci i valori richiesti
-        return "Sconosciuto", fmt.Errorf("errore nel caricamento del provider file: %v", err)
-    }
+	providerMapping, compiledMapping, err := loadProviderMapping(providerFile)
+	if err != nil {
+		return "Sconosciuto", fmt.Errorf("errore caricamento provider file: %v", err)
+	}
 
-    normalizedNS := normalizeNameserver(nameserver)
+	normalizedNS := normalizeNameserver(nameserver)
+	for key, regex := range compiledMapping {
+		if regex.MatchString(normalizedNS) {
+			return providerMapping[key], nil
+		}
+	}
 
-    // Cerca nel file JSON con regex compilate
-    for key, regex := range compiledMapping {
-        if regex.MatchString(normalizedNS) {
-            return providerMapping[key], nil
-        }
-    }
+	// Fallback a Shodan se IP-API e WHOIS non trovano risultati
+	ip, err := resolveIP(domain)
+	if err == nil {
+		if shodanProvider, err := getHostingFromShodan(ip); err == nil {
+			return shodanProvider, nil
+		}
+	}
 
-    // Fallback a WHOIS
-    whoisProvider, whoisErr := getHostingProviderFromWhois(normalizedNS)
-    if whoisErr == nil && whoisProvider != "Sconosciuto" {
-        return whoisProvider, nil
-    }
-
-    // Fallback con Reverse DNS
-    reverseDNS, _ := net.LookupAddr(normalizedNS)
-    if len(reverseDNS) > 0 {
-        return fmt.Sprintf("Reverse DNS: %s", reverseDNS[0]), nil
-    }
-
-    // Log nameserver sconosciuto e restituisci "Sconosciuto"
-    logUnknownNameserver(nameserver, domain)
-    return "Sconosciuto", nil
+	return "Sconosciuto", nil
 }
 
 // Funzione per loggare nameserver sconosciuti per analisi futura
@@ -370,17 +411,35 @@ func logUnknownNameserver(nameserver, domain string) {
     }
 }
 
+func getHostingFromShodan(ip string) (string, error) {
+	apiKey := "YgCCsdRgTvTDBVUUr4Q5A4vGjjf4CjIG" // Inserire API Key Shodan qui
+	client := shodan.NewClient(nil, apiKey)
+
+	// Crea un contesto di base
+	ctx := context.Background()
+
+	// Ottieni i servizi dell'IP da Shodan
+	host, err := client.GetServicesForHost(ctx, ip, nil)
+	if err != nil {
+		return "", fmt.Errorf("errore Shodan: %v", err)
+	}
+
+	// Verifica i risultati dei nomi host
+	if len(host.Hostnames) > 0 {
+		return fmt.Sprintf("Shodan: %s", host.Hostnames[0]), nil
+	}
+
+	return "Sconosciuto", nil
+}
+
 // Funzione per normalizzare il nameserver (rimuovendo prefissi come "ns-cloud-")
 func normalizeNameserver(nameserver string) string {
-    nameserver = strings.TrimSuffix(nameserver, ".")
-
-    // Mantieni solo gli ultimi due livelli del dominio
-    parts := strings.Split(nameserver, ".")
-    if len(parts) > 2 {
-        nameserver = strings.Join(parts[len(parts)-2:], ".")
-    }
-
-    return nameserver
+	nameserver = strings.TrimSuffix(nameserver, ".")
+	parts := strings.Split(nameserver, ".")
+	if len(parts) > 2 {
+		nameserver = strings.Join(parts[len(parts)-2:], ".")
+	}
+	return nameserver
 }
 
 // Funzione helper per estrarre il dominio dall'URL
