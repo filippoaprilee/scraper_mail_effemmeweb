@@ -1054,14 +1054,14 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
         return false // Se non riesce a estrarre il dominio, considera il sito non escluso
     }
 
-    // Controlla se il dominio è nella lista esclusa
+    // Rimuovi il prefisso www. dal dominio
+    domainWithoutWWW := removeWWW(domain)
+
+    // Controlla se il dominio o il dominio senza www è nella lista esclusa
     if _, found := excludedWebsites[domain]; found {
         fmt.Printf("Sito escluso (file JSON): %s\n", url)
         return true
     }
-
-    // Rimuovi www. e controlla nuovamente
-    domainWithoutWWW := removeWWW(domain)
     if _, found := excludedWebsites[domainWithoutWWW]; found {
         fmt.Printf("Sito escluso (senza www): %s\n", url)
         return true
