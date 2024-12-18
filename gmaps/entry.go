@@ -1077,6 +1077,16 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
         return strings.TrimPrefix(domain, "www.")
     }
 
+    // Helper per verificare i suffissi (wildcard parziali)
+    matchesExcludedPattern := func(domain string, excludedWebsites map[string]struct{}) bool {
+        for excluded := range excludedWebsites {
+            if strings.HasPrefix(domain, excluded) || strings.HasSuffix(domain, excluded) {
+                return true
+            }
+        }
+        return false
+    }    
+
     // Estrai il dominio principale dall'URL
     domain, err := estraiDominio(url)
     if err != nil {
@@ -1086,9 +1096,19 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
     // Rimuovi il prefisso "www." dal dominio
     domainWithoutWWW := removeWWW(domain)
 
-    // Controlla se il dominio o il dominio senza www è nella lista esclusa
-    if isInExcludedList(domain, excludedWebsites) || isInExcludedList(domainWithoutWWW, excludedWebsites) {
-        fmt.Printf("Sito escluso (lista esclusi): %s\n", url)
+    // Controlla se il dominio o il dominio senza "www." è esattamente nella lista esclusa
+    if _, found := excludedWebsites[domain]; found {
+        fmt.Printf("Sito escluso (esatto nella lista esclusi): %s\n", url)
+        return true
+    }
+    if _, found := excludedWebsites[domainWithoutWWW]; found {
+        fmt.Printf("Sito escluso (esatto senza www): %s\n", url)
+        return true
+    }
+
+    // Controlla se il dominio o il dominio senza "www." corrisponde a un pattern escluso (wildcard parziale)
+    if matchesExcludedPattern(domain, excludedWebsites) || matchesExcludedPattern(domainWithoutWWW, excludedWebsites) {
+        fmt.Printf("Sito escluso (wildcard parziale): %s\n", url)
         return true
     }
 
@@ -1112,12 +1132,6 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
 
     return false // Il sito non è escluso
 }
-
-func isInExcludedList(domain string, excludedWebsites map[string]struct{}) bool {
-    _, found := excludedWebsites[domain]
-    return found
-}
-
 
 func isSocialOrSpecificDomain(domain string) bool {
     // Lista dei domini o parole da escludere
