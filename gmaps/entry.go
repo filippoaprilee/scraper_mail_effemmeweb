@@ -446,10 +446,13 @@ func normalizeNameserver(nameserver string) string {
 func estraiDominio(url string) (string, error) {
     // Rimuovi il protocollo
     urlPulito := strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
-    
+
     // Dividi per il primo slash per rimuovere il percorso
     parti := strings.Split(urlPulito, "/")
     dominio := parti[0]
+
+    // Gestisci eventuali porti (ad esempio, "www.example.com:8080")
+    dominio = strings.Split(dominio, ":")[0]
 
     // Aggiungi alcuni controlli di validità
     if dominio == "" {
@@ -785,7 +788,7 @@ func checkSiteAvailability(url string) (string, error) {
 }
 
 func checkSiteMaintenance(html string) string {
-	// Parole chiave precise per indicare manutenzione o costruzione
+	// Parole chiave per la manutenzione o costruzione
 	maintenanceKeywords := []string{
 		"in costruzione", "manutenzione", "under construction", "maintenance mode",
 		"site under maintenance", "temporarily unavailable",
@@ -799,30 +802,50 @@ func checkSiteMaintenance(html string) string {
 	regexPattern := `\b(?:` + strings.Join(escapedKeywords, "|") + `)\b`
 	re := regexp.MustCompile(regexPattern)
 
-	// Cerca nelle varie sezioni dell'HTML
-	htmlLower := strings.ToLower(html)
-
-	// Cerca corrispondenze nel corpo intero
-	if re.MatchString(htmlLower) {
-		return "Sì"
-	}
-
-	// Cerca nel tag <title>
-	reTitle := regexp.MustCompile(`<title>(.*?)<\/title>`)
-	titleMatch := reTitle.FindStringSubmatch(htmlLower)
-	if len(titleMatch) > 1 {
-		title := titleMatch[1]
-		if re.MatchString(title) {
-			return "Sì"
+	// Funzione per estrarre contenuto da tag specifici
+	extractText := func(pattern string) string {
+		reTag := regexp.MustCompile(pattern)
+		matches := reTag.FindAllStringSubmatch(html, -1)
+		var extractedContent []string
+		for _, match := range matches {
+			if len(match) > 1 {
+				extractedContent = append(extractedContent, match[1])
+			}
 		}
+		return strings.Join(extractedContent, " ")
 	}
 
-	// Cerca nel tag <body>
-	reBody := regexp.MustCompile(`<body.*?>(.*?)<\/body>`)
-	bodyMatch := reBody.FindStringSubmatch(htmlLower)
-	if len(bodyMatch) > 1 {
-		bodyContent := bodyMatch[1]
-		if re.MatchString(bodyContent) {
+	// Estrai contenuti da <title>, <h1> ... <h6>, <p>, <em>, <strong>, <span>, <footer>, <a>
+	relevantTags := []string{
+		`<title>(.*?)<\/title>`,           // <title>
+		`<h1.*?>(.*?)<\/h1>`,              // <h1>
+		`<h2.*?>(.*?)<\/h2>`,              // <h2>
+		`<h3.*?>(.*?)<\/h3>`,              // <h3>
+		`<h4.*?>(.*?)<\/h4>`,              // <h4>
+		`<h5.*?>(.*?)<\/h5>`,              // <h5>
+		`<h6.*?>(.*?)<\/h6>`,              // <h6>
+		`<p.*?>(.*?)<\/p>`,                // <p>
+		`<em.*?>(.*?)<\/em>`,              // <em>
+		`<strong.*?>(.*?)<\/strong>`,      // <strong>
+		`<b.*?>(.*?)<\/b>`,                // <b>
+		`<i.*?>(.*?)<\/i>`,                // <i>
+		`<span.*?>(.*?)<\/span>`,          // <span>
+		`<a.*?>(.*?)<\/a>`,                // <a> (link)
+		`<footer.*?>(.*?)<\/footer>`,      // <footer>
+		`<div.*?>(.*?)<\/div>`,            // <div>
+		`<section.*?>(.*?)<\/section>`,    // <section>
+		`<article.*?>(.*?)<\/article>`,    // <article>
+		`<mark.*?>(.*?)<\/mark>`,          // <mark>
+		`<label.*?>(.*?)<\/label>`,        // <label>
+		`<blockquote.*?>(.*?)<\/blockquote>`, // <blockquote>
+		`<ins.*?>(.*?)<\/ins>`,            // <ins>
+		`<del.*?>(.*?)<\/del>`,            // <del>
+	}
+
+	// Cerca le parole chiave nelle sezioni rilevanti del sito
+	for _, pattern := range relevantTags {
+		content := extractText(pattern)
+		if re.MatchString(strings.ToLower(content)) {
 			return "Sì"
 		}
 	}
