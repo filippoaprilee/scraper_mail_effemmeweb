@@ -790,8 +790,8 @@ func checkSiteAvailability(url string) (string, error) {
 func checkSiteMaintenance(html string) string {
 	// Parole chiave per la manutenzione o costruzione
 	maintenanceKeywords := []string{
-		"in costruzione", "manutenzione", "under construction", "maintenance mode",
-		"site under maintenance", "temporarily unavailable",
+		"sito in costruzione", "sito in manutenzione", "site under construction", "maintenance mode",
+		"site under maintenance", "site temporarily unavailable",
 	}
 
 	// Creazione di una regex per parole/frasi precise
