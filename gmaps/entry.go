@@ -785,43 +785,49 @@ func checkSiteAvailability(url string) (string, error) {
 }
 
 func checkSiteMaintenance(html string) string {
-	// Parole chiave comuni per indicare manutenzione o costruzione
+	// Parole chiave precise per indicare manutenzione o costruzione
 	maintenanceKeywords := []string{
 		"in costruzione", "manutenzione", "under construction", "maintenance mode",
 		"site under maintenance", "temporarily unavailable",
 	}
 
-	// Cerca parole chiave nel contenuto HTML (corpo della pagina)
-	for _, keyword := range maintenanceKeywords {
-		if strings.Contains(strings.ToLower(html), keyword) {
+	// Creazione di una regex per parole/frasi precise
+	escapedKeywords := make([]string, len(maintenanceKeywords))
+	for i, keyword := range maintenanceKeywords {
+		escapedKeywords[i] = regexp.QuoteMeta(keyword) // Escapa i caratteri speciali
+	}
+	regexPattern := `\b(?:` + strings.Join(escapedKeywords, "|") + `)\b`
+	re := regexp.MustCompile(regexPattern)
+
+	// Cerca nelle varie sezioni dell'HTML
+	htmlLower := strings.ToLower(html)
+
+	// Cerca corrispondenze nel corpo intero
+	if re.MatchString(htmlLower) {
+		return "Sì"
+	}
+
+	// Cerca nel tag <title>
+	reTitle := regexp.MustCompile(`<title>(.*?)<\/title>`)
+	titleMatch := reTitle.FindStringSubmatch(htmlLower)
+	if len(titleMatch) > 1 {
+		title := titleMatch[1]
+		if re.MatchString(title) {
 			return "Sì"
 		}
 	}
 
-	// Cerca nel tag <title>
-	re := regexp.MustCompile(`<title>(.*?)<\/title>`)
-	match := re.FindStringSubmatch(strings.ToLower(html))
-	if len(match) > 1 {
-		title := match[1]
-		for _, keyword := range maintenanceKeywords {
-			if strings.Contains(title, keyword) {
-				return "Sì"
-			}
-		}
-	}
-
-    // Cerca anche nel tag <body> per altre parole chiave
+	// Cerca nel tag <body>
 	reBody := regexp.MustCompile(`<body.*?>(.*?)<\/body>`)
-	bodyMatch := reBody.FindStringSubmatch(html)
+	bodyMatch := reBody.FindStringSubmatch(htmlLower)
 	if len(bodyMatch) > 1 {
 		bodyContent := bodyMatch[1]
-		for _, keyword := range maintenanceKeywords {
-			if strings.Contains(strings.ToLower(bodyContent), keyword) {
-				return "Sì"
-			}
+		if re.MatchString(bodyContent) {
+			return "Sì"
 		}
 	}
 
+	// Nessuna corrispondenza trovata
 	return "No"
 }
 
@@ -1043,7 +1049,7 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile, providerFile string) (Entry
 
 // isExcludedWebsite verifica se il sito web deve essere escluso
 func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
-    // Helper per rimuovere www.
+    // Helper per rimuovere il prefisso "www."
     removeWWW := func(domain string) string {
         return strings.TrimPrefix(domain, "www.")
     }
@@ -1054,20 +1060,16 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
         return false // Se non riesce a estrarre il dominio, considera il sito non escluso
     }
 
-    // Rimuovi il prefisso www. dal dominio
+    // Rimuovi il prefisso "www." dal dominio
     domainWithoutWWW := removeWWW(domain)
 
     // Controlla se il dominio o il dominio senza www è nella lista esclusa
-    if _, found := excludedWebsites[domain]; found {
-        fmt.Printf("Sito escluso (file JSON): %s\n", url)
-        return true
-    }
-    if _, found := excludedWebsites[domainWithoutWWW]; found {
-        fmt.Printf("Sito escluso (senza www): %s\n", url)
+    if isInExcludedList(domain, excludedWebsites) || isInExcludedList(domainWithoutWWW, excludedWebsites) {
+        fmt.Printf("Sito escluso (lista esclusi): %s\n", url)
         return true
     }
 
-    // Verifica contro domini social o prefissi
+    // Verifica contro domini social o specifici
     if isSocialOrSpecificDomain(domain) || isSocialOrSpecificDomain(domainWithoutWWW) {
         fmt.Printf("Sito escluso (social o specifico): %s\n", url)
         return true
@@ -1075,18 +1077,24 @@ func isExcludedWebsite(url string, excludedWebsites map[string]struct{}) bool {
 
     // Verifica contro domini con prefissi specifici
     if hasForbiddenPrefix(domain) || hasForbiddenPrefix(domainWithoutWWW) {
-        fmt.Printf("Sito escluso (prefisso): %s\n", url)
+        fmt.Printf("Sito escluso (prefisso specifico): %s\n", url)
         return true
     }
 
     // Verifica contro estensioni particolari
     if hasForbiddenExtension(domain) || hasForbiddenExtension(domainWithoutWWW) {
-        fmt.Printf("Sito escluso (estensione): %s\n", url)
+        fmt.Printf("Sito escluso (estensione specifica): %s\n", url)
         return true
     }
 
     return false // Il sito non è escluso
 }
+
+func isInExcludedList(domain string, excludedWebsites map[string]struct{}) bool {
+    _, found := excludedWebsites[domain]
+    return found
+}
+
 
 func isSocialOrSpecificDomain(domain string) bool {
     // Lista dei domini o parole da escludere
@@ -1120,14 +1128,12 @@ func hasForbiddenExtension(domain string) bool {
     extensions := []string{".edu.it", ".fr"}
 
     for _, ext := range extensions {
-        if strings.HasSuffix(domain, ext) {
+        if strings.HasSuffix(strings.ToLower(domain), ext) {
             return true
         }
     }
-
     return false
 }
-
 
 func validateEmail(email string) string {
 	if len(email) > 100 {
