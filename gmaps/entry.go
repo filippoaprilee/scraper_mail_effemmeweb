@@ -111,7 +111,6 @@ func loadExcludedWebsites(filename string) (map[string]struct{}, error) {
     return excluded, nil
 }
 
-
 // Funzione per ottenere i punteggi SEO, Mobile e Desktop
 func getPageSpeedScores(url string) (int, int, float64, error) {
     apiKey := "AIzaSyD13bhKEEwzY15yMgsolkVvMCuToZsHPlU" // Inserisci la tua API Key qui
@@ -229,32 +228,33 @@ func loadProviderMapping(filename string) (map[string]string, map[string]*regexp
 
 // Usa WHOIS per ottenere informazioni sul dominio
 func getHostingProviderFromWhois(domain string) (string, error) {
-	req, err := whois.NewRequest(domain)
-	if err != nil {
-		return "Sconosciuto", fmt.Errorf("errore WHOIS: %v", err)
-	}
+    req, err := whois.NewRequest(domain)
+    if err != nil {
+        return "Sconosciuto", fmt.Errorf("errore WHOIS: %v", err)
+    }
 
-	resp, err := whois.DefaultClient.Fetch(req)
-	if err != nil {
-		return "Sconosciuto", fmt.Errorf("errore durante richiesta WHOIS: %v", err)
-	}
+    resp, err := whois.DefaultClient.Fetch(req)
+    if err != nil {
+        return "Sconosciuto", fmt.Errorf("errore durante richiesta WHOIS: %v", err)
+    }
 
-	data := resp.String()
-	commonProviders := map[string]string{
-		"Cloudflare": "Cloudflare",
-		"Amazon":     "Amazon Web Services",
-		"Microsoft":  "Microsoft Azure",
-		"Google":     "Google Cloud",
-		"Aruba":      "Aruba Hosting",
-	}
+    data := resp.String()
+    commonProviders := map[string]string{
+        "Cloudflare": "Cloudflare",
+        "Amazon":     "Amazon Web Services",
+        "Microsoft":  "Microsoft Azure",
+        "Google":     "Google Cloud",
+        "Aruba":      "Aruba Hosting",
+    }
 
-	for key, provider := range commonProviders {
-		if strings.Contains(data, key) {
-			return provider, nil
-		}
-	}
+    for key, provider := range commonProviders {
+        if strings.Contains(data, key) {
+            // Rimuovi virgolette doppie
+            return strings.ReplaceAll(provider, "\"", ""), nil
+        }
+    }
 
-	return "Sconosciuto", nil
+    return "Sconosciuto", nil
 }
 
 func getHostingProviderWithMultipleNameservers(domain, providerFile string) (string, error) {
@@ -364,27 +364,30 @@ func getHostingFromIPAPI(ip string) (string, error) {
 
 
 func identificaHostingDaNameserver(nameserver, domain, providerFile string) (string, error) {
-	providerMapping, compiledMapping, err := loadProviderMapping(providerFile)
-	if err != nil {
-		return "Sconosciuto", fmt.Errorf("errore caricamento provider file: %v", err)
-	}
+    providerMapping, compiledMapping, err := loadProviderMapping(providerFile)
+    if err != nil {
+        return "Sconosciuto", fmt.Errorf("errore caricamento provider file: %v", err)
+    }
 
-	normalizedNS := normalizeNameserver(nameserver)
-	for key, regex := range compiledMapping {
-		if regex.MatchString(normalizedNS) {
-			return providerMapping[key], nil
-		}
-	}
+    normalizedNS := normalizeNameserver(nameserver)
+    for key, regex := range compiledMapping {
+        if regex.MatchString(normalizedNS) {
+            hostingProvider := providerMapping[key]
+            // Rimuovi virgolette doppie
+            return strings.ReplaceAll(hostingProvider, "\"", ""), nil
+        }
+    }
 
-	// Fallback a Shodan se IP-API e WHOIS non trovano risultati
-	ip, err := resolveIP(domain)
-	if err == nil {
-		if shodanProvider, err := getHostingFromShodan(ip); err == nil {
-			return shodanProvider, nil
-		}
-	}
+    // Fallback a Shodan se IP-API e WHOIS non trovano risultati
+    ip, err := resolveIP(domain)
+    if err == nil {
+        if shodanProvider, err := getHostingFromShodan(ip); err == nil {
+            // Rimuovi virgolette doppie
+            return strings.ReplaceAll(shodanProvider, "\"", ""), nil
+        }
+    }
 
-	return "Sconosciuto", nil
+    return "Sconosciuto", nil
 }
 
 // Funzione per loggare nameserver sconosciuti per analisi futura
@@ -412,24 +415,24 @@ func logUnknownNameserver(nameserver, domain string) {
 }
 
 func getHostingFromShodan(ip string) (string, error) {
-	apiKey := "YgCCsdRgTvTDBVUUr4Q5A4vGjjf4CjIG" // Inserire API Key Shodan qui
-	client := shodan.NewClient(nil, apiKey)
+    apiKey := "YgCCsdRgTvTDBVUUr4Q5A4vGjjf4CjIG" // Inserire API Key Shodan qui
+    client := shodan.NewClient(nil, apiKey)
 
-	// Crea un contesto di base
-	ctx := context.Background()
+    // Crea un contesto di base
+    ctx := context.Background()
 
-	// Ottieni i servizi dell'IP da Shodan
-	host, err := client.GetServicesForHost(ctx, ip, nil)
-	if err != nil {
-		return "", fmt.Errorf("errore Shodan: %v", err)
-	}
+    // Ottieni i servizi dell'IP da Shodan
+    host, err := client.GetServicesForHost(ctx, ip, nil)
+    if err != nil {
+        return "", fmt.Errorf("errore Shodan: %v", err)
+    }
 
-	// Verifica i risultati dei nomi host
-	if len(host.Hostnames) > 0 {
-		return fmt.Sprintf("Shodan: %s", host.Hostnames[0]), nil
-	}
+    // Verifica i risultati dei nomi host
+    if len(host.Hostnames) > 0 {
+        return strings.ReplaceAll(fmt.Sprintf("Shodan: %s", host.Hostnames[0]), "\"", ""), nil
+    }
 
-	return "Sconosciuto", nil
+    return "Sconosciuto", nil
 }
 
 // Funzione per normalizzare il nameserver (rimuovendo prefissi come "ns-cloud-")
@@ -440,6 +443,14 @@ func normalizeNameserver(nameserver string) string {
 		nameserver = strings.Join(parts[len(parts)-2:], ".")
 	}
 	return nameserver
+}
+
+// normalizeURL rimuove i parametri di query da un URL lasciando solo il dominio e il percorso base.
+func normalizeURL(url string) string {
+    if idx := strings.Index(url, "?"); idx != -1 {
+        return url[:idx] // Rimuove tutto ciò che segue il punto interrogativo
+    }
+    return url
 }
 
 // Funzione helper per estrarre il dominio dall'URL
@@ -463,31 +474,42 @@ func estraiDominio(url string) (string, error) {
 }
 
 // detectCookieBanner controlla la presenza della parola "Cookie Policy" nella pagina.
+// detectCookieBanner controlla la presenza di termini come "Cookie Policy" nella pagina.
 func detectCookieBanner(url string) (string, error) {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+    client := &http.Client{
+        Timeout: 15 * time.Second,
+    }
 
-	resp, err := client.Get(url)
-	if err != nil {
-		return "No", fmt.Errorf("errore durante il fetch dell'URL %s: %v", url, err)
-	}
-	defer resp.Body.Close()
+    resp, err := client.Get(url)
+    if err != nil {
+        return "Non trovato", fmt.Errorf("errore durante il fetch dell'URL %s: %v", url, err)
+    }
+    defer resp.Body.Close()
 
-	// Leggi il contenuto HTML
-	buf := new(strings.Builder)
-	_, err = io.Copy(buf, resp.Body)
-	if err != nil {
-		return "No", fmt.Errorf("errore durante la lettura del contenuto HTML: %v", err)
-	}
-	html := buf.String()
+    if resp.StatusCode != http.StatusOK {
+        return "Non trovato", fmt.Errorf("errore HTTP (%d) per URL: %s", resp.StatusCode, url)
+    }
 
-	// Controlla la presenza di "Cookie Policy"
-	if strings.Contains(strings.ToLower(html), "cookie policy") {
-		return "Sì", nil
-	}
+    // Leggi il contenuto HTML
+    buf := new(strings.Builder)
+    _, err = io.Copy(buf, resp.Body)
+    if err != nil {
+        return "Non trovato", fmt.Errorf("errore durante la lettura del contenuto HTML: %v", err)
+    }
+    html := buf.String()
 
-	return "No", nil
+    // Parole chiave per identificare un cookie banner
+    keywords := []string{"cookie policy", "cookie banner", "cookie settings", "gestione cookie", "accetta i cookie"}
+
+    // Controlla la presenza di parole chiave nel contenuto HTML
+    for _, keyword := range keywords {
+        if strings.Contains(strings.ToLower(html), keyword) {
+            return "Sì", nil
+        }
+    }
+
+    // Se nessuna parola chiave è trovata, restituisci "No"
+    return "No", nil
 }
 
 // detectProtocol verifica se l'URL usa HTTP o HTTPS, controllando prima l'HTTP e poi l'HTTPS.
@@ -885,7 +907,7 @@ func (e *Entry) CsvRow(excludedWebsites map[string]struct{}, providerFile string
         e.SiteMaintenance == "" {
         return nil // Se tutti i campi sono vuoti, non genera la riga
     }
-    
+
     if e.Title == "" || e.Phone == "" {
         return nil
     }
@@ -893,22 +915,27 @@ func (e *Entry) CsvRow(excludedWebsites map[string]struct{}, providerFile string
     // Verifica se il sito web è escluso o è un social media
     dominio := e.WebSite
     if dominio == "" || isExcludedWebsite(dominio, excludedWebsites) || isSocialMediaDomain(dominio) {
-        dominio = ""  // Se il sito è escluso o appartiene ai social media, azzera il campo
+        dominio = "" // Se il sito è escluso o appartiene ai social media, azzera il campo
     }
 
+    // Normalizza il dominio rimuovendo i parametri di query
+    dominio = normalizeURL(dominio)
+
     // Aggiungi il provider di hosting solo se il dominio non è escluso
-	hostingProvider := e.HostingProvider
-	if dominio != "" {
-		var err error
-		hostingProvider, err = getHostingProviderWithFile(dominio, providerFile) // Chiamata per ottenere il provider
-		if err != nil {
-			hostingProvider = "Sconosciuto"
-		}
-	}
-    return []string{
+    hostingProvider := e.HostingProvider
+    if dominio != "" {
+        var err error
+        hostingProvider, err = getHostingProviderWithFile(dominio, providerFile) // Chiamata per ottenere il provider
+        if err != nil {
+            hostingProvider = "Sconosciuto"
+        }
+    }
+
+    // Genera la riga CSV con i campi ripuliti dalle virgolette doppie
+    row := []string{
         e.Title,
         e.Category,
-        dominio,  // Se il sito è escluso, il campo viene lasciato vuoto
+        dominio,
         e.Phone,
         e.Street,
         e.City,
@@ -917,13 +944,20 @@ func (e *Entry) CsvRow(excludedWebsites map[string]struct{}, providerFile string
         e.Protocol,
         e.Technology,
         e.CookieBanner,
-        hostingProvider,  // Aggiungi il nameserver
+        hostingProvider,
         e.MobilePerformance,
         e.DesktopPerformance,
-        e.SeoScore,       // Aggiungi il punteggio SEO
-        e.SiteAvailability, // Disponibilità del sito
-        e.SiteMaintenance,  // Stato di manutenzione
+        e.SeoScore,
+        e.SiteAvailability,
+        e.SiteMaintenance,
     }
+
+    // Rimuovi le virgolette doppie da ogni campo
+    for i, field := range row {
+        row[i] = strings.ReplaceAll(field, "\"", "")
+    }
+
+    return row
 }
 
 // Funzione per verificare se un dominio è un social media
@@ -1043,8 +1077,10 @@ func EntryFromJSON(raw []byte, cmsFile, excludeFile, providerFile string) (Entry
         }    
         if cookieBanner, err := detectCookieBanner(entry.WebSite); err == nil {
             entry.CookieBanner = cookieBanner
+        } else {
+            fmt.Printf("Errore rilevazione cookie banner per %s: %v\n", entry.WebSite, err)
+            entry.CookieBanner = "Non trovato" // Assegna valore predefinito se non trovato
         }
-
         if hostingProvider, err := getHostingProviderWithFile(entry.WebSite, providerFile); err == nil {
             entry.HostingProvider = hostingProvider
         } else {
@@ -1138,6 +1174,7 @@ func isSocialOrSpecificDomain(domain string) bool {
     keywords := []string{
         "facebook.", "instagram.", "linkedin.", "youtube.", "tiktok.",
         "comune.", "e-coop.it", ".iqos.", ".tecnocasa.",
+        "bookizon.it", "widget.treatwell.it", "treatwell.it",
     }
 
     for _, keyword := range keywords {

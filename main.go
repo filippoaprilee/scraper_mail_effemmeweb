@@ -595,6 +595,12 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
         return "", fmt.Errorf("errore nella creazione della directory %s: %v", csvDir, err)
     }
 
+    // Creazione della directory per i VCF
+    vcfDir := "vcf_results"
+    if err := os.MkdirAll(vcfDir, os.ModePerm); err != nil {
+        return "", fmt.Errorf("errore nella creazione della directory %s: %v", vcfDir, err)
+    }
+
     // Usa la categoria per creare un nome unico per il file CSV
     currentTime := time.Now().Format("20060102_150405")
     outputFileName := fmt.Sprintf("%s/%s_%s.csv", csvDir, category, currentTime)
@@ -604,9 +610,9 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
         return "", fmt.Errorf("errore durante la creazione del file CSV per la categoria %s: %v", category, err)
     }
     defer output.Close()
-    
 
     csvWriter := csv.NewWriter(output)
+    csvWriter.UseCRLF = true // Se vuoi terminatori di riga Windows-style
     defer csvWriter.Flush()
 
     // Scrivi l'intestazione del CSV
@@ -620,7 +626,7 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
     }
 
     // File VCF
-    vcfFileName := fmt.Sprintf("%s/numeriditelefono_%s_%s.vcf", csvDir, category, currentTime)
+    vcfFileName := fmt.Sprintf("%s/numeriditelefono_%s_%s.vcf", vcfDir, category, currentTime)
     vcfFile, err := os.Create(vcfFileName)
     if err != nil {
         return "", fmt.Errorf("errore durante la creazione del file VCF per la categoria %s: %v", category, err)
@@ -730,13 +736,14 @@ func cleanLastRowFromCSV(filePath string) error {
 	}
 	defer tempFile.Close()
 
-	writer := csv.NewWriter(tempFile)
-	defer writer.Flush()
+	// Inizializza un writer CSV
+    writer := csv.NewWriter(tempFile)
+    defer writer.Flush()
 
-	// Scrivi il CSV pulito
-	if err := writer.WriteAll(rows); err != nil {
-		return fmt.Errorf("errore durante la scrittura nel file CSV: %v", err)
-	}
+    // Scrivi il CSV pulito
+    if err := writer.WriteAll(rows); err != nil {
+        return fmt.Errorf("errore durante la scrittura nel file CSV: %v", err)
+    }
 
 	// Sostituisci il file originale con il file temporaneo
 	if err := os.Rename(tempFilePath, filePath); err != nil {
@@ -883,6 +890,7 @@ func generateEmailsToSend(csvFilePath string, category string) error {
     defer outputFile.Close()
 
     writer := csv.NewWriter(outputFile)
+    writer.UseCRLF = true // Se vuoi terminatori di riga Windows-style
     defer writer.Flush()
 
     // Scrive l'intestazione
@@ -1380,52 +1388,40 @@ func (cw *customCsvWriter) WriteResult(result scrapemate.Result) error {
         entry.HostingProvider == "" && entry.MobilePerformance == "" &&
         entry.DesktopPerformance == "" && entry.SeoScore == "" && entry.SiteAvailability == "" &&
         entry.SiteMaintenance == "" {
-        fmt.Println("Riga completamente vuota rilevata. Ignorata.")
+        fmt.Println("⚠️  Riga completamente vuota rilevata. Ignorata.")
         return nil // Non scrive la riga
     }
 
-
     email := entry.Email
     phone := entry.Phone
-    name := entry.Title // Activity name
+    name := entry.Title // Nome attività
 
-    // Se l'email esiste, controlliamo se è già presente nel CSV
+    // Controllo duplicati
     if email != "" && cw.emails[email] {
-        // Se l'email è già presente, ignora questa riga
-        fmt.Printf("Duplicato trovato per l'email: %s. Riga ignorata.\n", email)
+        fmt.Printf("🔁 Duplicato trovato per l'email: %s. Riga ignorata.\n", email)
+        return nil
+    }
+    if phone != "" && cw.phones[phone] {
+        fmt.Printf("🔁 Duplicato trovato per il telefono: %s. Riga ignorata.\n", phone)
+        return nil
+    }
+    if name != "" && cw.names[name] {
+        fmt.Printf("🔁 Duplicato trovato per il nome dell'attività: %s. Riga ignorata.\n", name)
         return nil
     }
 
-    // Se non è presente, aggiungiamola alla mappa delle email
+    // Aggiungi ai set dei duplicati
     if email != "" {
         cw.emails[email] = true
     }
-
-    // Se l'email non è presente, controlliamo il numero di telefono
-    if phone != "" && cw.phones[phone] {
-        // Se il telefono è già presente, ignoriamo questa riga
-        fmt.Printf("Duplicato trovato per il telefono: %s. Riga ignorata.\n", phone)
-        return nil
-    }
-
-    // Se non è presente, aggiungiamolo alla mappa dei numeri di telefono
     if phone != "" {
         cw.phones[phone] = true
     }
-
-    // Se né email né telefono sono presenti, controlliamo se il nome dell'attività è già presente
-    if name != "" && cw.names[name] {
-        // Se il nome dell'attività è già presente, ignoriamo questa riga
-        fmt.Printf("Duplicato trovato per il nome dell'attività: %s. Riga ignorata.\n", name)
-        return nil
-    }
-
-    // Se il nome dell'attività non è presente, aggiungiamolo alla mappa dei nomi
     if name != "" {
         cw.names[name] = true
     }
 
-    // Crea la riga da scrivere nel CSV
+    // Prepara la riga CSV
     record := []string{
         entry.Title,
         entry.Category,
@@ -1437,32 +1433,45 @@ func (cw *customCsvWriter) WriteResult(result scrapemate.Result) error {
         entry.Email,
         entry.Protocol,
         entry.Technology,
-        entry.CookieBanner, 
+        entry.CookieBanner,
         entry.HostingProvider,
         entry.MobilePerformance,
         entry.DesktopPerformance,
         entry.SeoScore,
-        entry.SiteAvailability, // Nuovo campo
-        entry.SiteMaintenance,  // Nuovo campo
+        entry.SiteAvailability,
+        entry.SiteMaintenance,
     }
 
+    // Rimuovi virgolette doppie dai campi
+    for i, field := range record {
+        record[i] = strings.ReplaceAll(field, "\"", "")
+    }
 
-    // Convalida il numero di campi rispetto all'intestazione
-    expectedFields := 17 // Aggiornato per includere Desktop Performance
+    // Verifica il numero di campi
+    expectedFields := 17
     if len(record) != expectedFields {
-        fmt.Printf("Riga scartata (numero di campi errato): %v\n", record)
+        fmt.Printf("⚠️  Riga scartata (numero di campi errato): %v\n", record)
         return nil
     }
 
+    // Scrivi il contatto nel file VCF
     if phone != "" {
-        // Scrivi il contatto nel file VCF
         if err := writeVCF(cw.vcfFile, name, phone); err != nil {
-            fmt.Printf("Errore durante la scrittura del contatto VCF: %v\n", err)
+            fmt.Printf("❌ Errore durante la scrittura del contatto VCF: %v\n", err)
         }
     }
 
+    // Rimuove le virgolette doppie da ogni campo
+    for i, field := range record {
+        record[i] = strings.ReplaceAll(field, "\"", "")
+    }
+
     // Scrivi la riga nel CSV
-    return cw.writer.Write(record)
+    if err := cw.writer.Write(record); err != nil {
+        return fmt.Errorf("❌ Errore durante la scrittura nel file CSV: %v", err)
+    }
+
+    return nil
 }
 
 func (cw *customCsvWriter) Run(ctx context.Context, results <-chan scrapemate.Result) error {

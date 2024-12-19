@@ -98,14 +98,30 @@ func findEmailsFromBody(body []byte) []string {
 }
 
 func sanitizeEmail(email string) string {
-	return strings.ReplaceAll(email, "%20", "")
+	// Rimuovi spazi, caratteri di escape e normalizza in minuscolo
+	email = strings.ReplaceAll(email, "%20", "")
+	email = strings.ReplaceAll(email, "\n", "")
+	email = strings.ReplaceAll(email, "\r", "")
+	email = strings.ToLower(strings.TrimSpace(email)) // Converti in minuscolo
+	return email
 }
 
 func isValidEmail(email string) bool {
+	// Escludi email che contengono riferimenti a immagini o pattern non validi
+	invalidPatterns := []string{".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".bmp", "logo"}
+	emailLower := strings.ToLower(email) // Converti in minuscolo per il controllo
+
+	for _, pattern := range invalidPatterns {
+		if strings.Contains(emailLower, pattern) {
+			return false
+		}
+	}
+
+	// Verifica la lunghezza e la validità dell'email
 	if len(email) > 100 {
 		return false
 	}
-	_, err := emailaddress.Parse(strings.TrimSpace(email))
+	_, err := emailaddress.Parse(strings.TrimSpace(emailLower))
 	return err == nil
 }
 
