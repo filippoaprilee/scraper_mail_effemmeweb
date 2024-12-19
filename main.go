@@ -588,15 +588,18 @@ func filterKeywordsByCategory(keywords []string, category string) []string {
     return filteredKeywords
 }
 
+// Definizione della directory principale
+const baseDir = "scraper_results"
+
 func runScrapingForCategory(ctx context.Context, category string) (string, error) {
     // Creazione della directory per i CSV
-    csvDir := "csv_results"
+    csvDir := filepath.Join(baseDir, "csv_results")
     if err := os.MkdirAll(csvDir, os.ModePerm); err != nil {
         return "", fmt.Errorf("errore nella creazione della directory %s: %v", csvDir, err)
     }
 
     // Creazione della directory per i VCF
-    vcfDir := "vcf_results"
+    vcfDir := filepath.Join(baseDir, "vcf_results")
     if err := os.MkdirAll(vcfDir, os.ModePerm); err != nil {
         return "", fmt.Errorf("errore nella creazione della directory %s: %v", vcfDir, err)
     }
@@ -804,7 +807,7 @@ func generateSQLFromCSV(ctx context.Context, csvFilePath string, category string
 		return fmt.Errorf("errore durante la pulizia dell'ultima riga del CSV: %v", err)
 	}
 
-	sqlDir := "sql_results"
+	sqlDir := filepath.Join(baseDir, "sql_results")
 	if err := os.MkdirAll(sqlDir, os.ModePerm); err != nil {
 		return fmt.Errorf("errore nella creazione della directory %s: %v", sqlDir, err)
 	}
@@ -848,7 +851,7 @@ func generateSQLFromCSV(ctx context.Context, csvFilePath string, category string
 }
 
 func generateEmailsToSend(csvFilePath string, category string) error {
-    emailDir := "email_results"
+    emailDir := filepath.Join(baseDir, "email_results")
     if err := os.MkdirAll(emailDir, os.ModePerm); err != nil {
         return fmt.Errorf("errore nella creazione della directory %s: %v", emailDir, err)
     }

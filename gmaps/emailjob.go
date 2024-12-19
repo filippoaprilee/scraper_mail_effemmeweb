@@ -108,7 +108,10 @@ func sanitizeEmail(email string) string {
 
 func isValidEmail(email string) bool {
 	// Escludi email che contengono riferimenti a immagini o pattern non validi
-	invalidPatterns := []string{".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".bmp", "logo"}
+	invalidPatterns := []string{
+		".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".bmp", "logo",
+		"@sentry-next.wixpress.com", "@example.com",
+	}
 	emailLower := strings.ToLower(email) // Converti in minuscolo per il controllo
 
 	for _, pattern := range invalidPatterns {
@@ -117,10 +120,22 @@ func isValidEmail(email string) bool {
 		}
 	}
 
-	// Verifica la lunghezza e la validità dell'email
+	// Controllo sulla lunghezza dell'email
 	if len(email) > 100 {
 		return false
 	}
+
+	// Controllo sulla validità del dominio
+	invalidDomains := []string{
+		"wixpress.com", "sentry.io", "test.com", "example.com",
+	}
+	for _, domain := range invalidDomains {
+		if strings.HasSuffix(emailLower, "@"+domain) {
+			return false
+		}
+	}
+
+	// Controllo finale per validità dell'email
 	_, err := emailaddress.Parse(strings.TrimSpace(emailLower))
 	return err == nil
 }
