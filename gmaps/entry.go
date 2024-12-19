@@ -445,11 +445,20 @@ func normalizeNameserver(nameserver string) string {
 	return nameserver
 }
 
-// normalizeURL rimuove i parametri di query da un URL lasciando solo il dominio e il percorso base.
 func normalizeURL(url string) string {
-    if idx := strings.Index(url, "?"); idx != -1 {
-        return url[:idx] // Rimuove tutto ciò che segue il punto interrogativo
+    // Rimuovi il protocollo
+    url = strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
+
+    // Dividi per il primo slash
+    if idx := strings.Index(url, "/"); idx != -1 {
+        url = url[:idx] // Tieni solo la parte prima del primo slash
     }
+
+    // Rimuovi eventuali parametri di query residui
+    if idx := strings.Index(url, "?"); idx != -1 {
+        url = url[:idx] // Tieni solo la parte prima del punto interrogativo
+    }
+
     return url
 }
 
@@ -473,7 +482,6 @@ func estraiDominio(url string) (string, error) {
     return dominio, nil
 }
 
-// detectCookieBanner controlla la presenza della parola "Cookie Policy" nella pagina.
 // detectCookieBanner controlla la presenza di termini come "Cookie Policy" nella pagina.
 func detectCookieBanner(url string) (string, error) {
     client := &http.Client{
@@ -499,7 +507,7 @@ func detectCookieBanner(url string) (string, error) {
     html := buf.String()
 
     // Parole chiave per identificare un cookie banner
-    keywords := []string{"cookie policy", "cookie banner", "cookie settings", "gestione cookie", "accetta i cookie"}
+    keywords := []string{"privacy e cookie policy", "cookie policy", "cookie banner", "cookie settings", "gestione cookie", "accetta i cookie", "impostazioni dei cookie", "dichiarazione privacy"}
 
     // Controlla la presenza di parole chiave nel contenuto HTML
     for _, keyword := range keywords {
@@ -813,7 +821,7 @@ func checkSiteMaintenance(html string) string {
 	// Parole chiave per la manutenzione o costruzione
 	maintenanceKeywords := []string{
 		"sito in costruzione", "sito in manutenzione", "site under construction", "maintenance mode",
-		"site under maintenance", "site temporarily unavailable",
+		"site under maintenance", "site temporarily unavailable", "Modalità di manutenzione", "maintenance-heading",
 	}
 
 	// Creazione di una regex per parole/frasi precise
