@@ -228,9 +228,9 @@ func main() {
         fmt.Println("2. 💾 Converti un file CSV esistente in istruzioni SQL.")
         fmt.Println("3. 📧 Genera un file email da un CSV.")
         fmt.Println("4. 📤 Invia email utilizzando un file CSV.")
-        fmt.Println("5. ❌ Esci dall'applicazione.")
-        fmt.Println("6. ❌ Pulisci URL.")
-        fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-5): "))
+        fmt.Println("5. 🧹 Pulisci URL dei siti web.")
+        fmt.Println("6. ❌ Esci dall'applicazione.")
+        fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-6): "))
 
         reader := bufio.NewReader(os.Stdin)
         choice, _ := reader.ReadString('\n')
@@ -291,7 +291,7 @@ func main() {
                     fmt.Println("Email inviate con successo.")
                 }
             }
-        case "6":
+        case "5":
             fmt.Println("Pulizia degli URL nei file CSV in corso...")
             csvDir := filepath.Join(baseDir, "csv_results")
             if err := cleanURLsInCSVFiles(csvDir); err != nil {
@@ -299,7 +299,7 @@ func main() {
             } else {
                 fmt.Println(color.New(color.FgGreen).Sprint("Pulizia degli URL completata con successo."))
             }  
-        case "5":
+        case "6":
             fmt.Println(color.New(color.FgGreen).Sprint("Uscita dal programma. Arrivederci!"))
             return      
         default:
