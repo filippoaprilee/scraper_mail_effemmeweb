@@ -229,6 +229,7 @@ func main() {
         fmt.Println("3. 📧 Genera un file email da un CSV.")
         fmt.Println("4. 📤 Invia email utilizzando un file CSV.")
         fmt.Println("5. ❌ Esci dall'applicazione.")
+        fmt.Println("6. ❌ Pulisci URL.")
         fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-5): "))
 
         reader := bufio.NewReader(os.Stdin)
@@ -290,19 +291,113 @@ func main() {
                     fmt.Println("Email inviate con successo.")
                 }
             }
+        case "6":
+            fmt.Println("Pulizia degli URL nei file CSV in corso...")
+            csvDir := filepath.Join(baseDir, "csv_results")
+            if err := cleanURLsInCSVFiles(csvDir); err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la pulizia degli URL nei file CSV: %v", err))
+            } else {
+                fmt.Println(color.New(color.FgGreen).Sprint("Pulizia degli URL completata con successo."))
+            }  
         case "5":
             fmt.Println(color.New(color.FgGreen).Sprint("Uscita dal programma. Arrivederci!"))
-            return
+            return      
         default:
             fmt.Println(color.New(color.FgRed).Sprint("Opzione non valida. Riprova."))
         }
     }
 }
 
+func cleanURLsInCSVFiles(dir string) error {
+    files, err := filepath.Glob(filepath.Join(dir, "*.csv"))
+    if err != nil {
+        return fmt.Errorf("errore nella scansione dei file CSV: %v", err)
+    }
+
+    for _, file := range files {
+        fmt.Printf("Pulizia degli URL nel file: %s\n", file)
+
+        if err := cleanURLsInCSV(file); err != nil {
+            fmt.Printf("Errore durante la pulizia del file %s: %v\n", file, err)
+        } else {
+            fmt.Printf("File %s pulito con successo.\n", file)
+        }
+    }
+
+    return nil
+}
+
+func cleanURLsInCSV(filePath string) error {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return fmt.Errorf("impossibile aprire il file: %v", err)
+    }
+    defer file.Close()
+
+    reader := csv.NewReader(file)
+    rows, err := reader.ReadAll()
+    if err != nil {
+        return fmt.Errorf("errore nella lettura del file CSV: %v", err)
+    }
+
+    if len(rows) == 0 {
+        return fmt.Errorf("file vuoto")
+    }
+
+    // Identifica la colonna "Sito Web" o equivalente
+    header := rows[0]
+    urlColumnIndex := -1
+    for i, col := range header {
+        if strings.ToLower(strings.TrimSpace(col)) == "sito web" {
+            urlColumnIndex = i
+            break
+        }
+    }
+
+    if urlColumnIndex == -1 {
+        return fmt.Errorf("colonna 'Sito Web' non trovata")
+    }
+
+    // Pulisce gli URL
+    for i, row := range rows {
+        if i == 0 || len(row) <= urlColumnIndex {
+            continue // Salta l'intestazione o righe non valide
+        }
+
+        originalURL := row[urlColumnIndex]
+        cleanedURL := cleanURL(originalURL)
+        rows[i][urlColumnIndex] = cleanedURL
+    }
+
+    // Scrive il file aggiornato
+    tempFilePath := filePath + ".tmp"
+    tempFile, err := os.Create(tempFilePath)
+    if err != nil {
+        return fmt.Errorf("errore nella creazione del file temporaneo: %v", err)
+    }
+    defer tempFile.Close()
+
+    writer := csv.NewWriter(tempFile)
+    defer writer.Flush()
+
+    if err := writer.WriteAll(rows); err != nil {
+        return fmt.Errorf("errore durante la scrittura del file aggiornato: %v", err)
+    }
+
+    return os.Rename(tempFilePath, filePath)
+}
+
+func cleanURL(url string) string {
+    if idx := strings.Index(url, "?"); idx != -1 {
+        url = url[:idx]
+    }
+    return strings.TrimSuffix(url, "/")
+}
+
 func getExistingCSVFile() string {
-	files, err := filepath.Glob("csv_results/*.csv")
+	files, err := filepath.Glob("scraper_results/csv_results/*.csv")
 	if err != nil || len(files) == 0 {
-		fmt.Println(color.New(color.FgRed).Sprint("Nessun file CSV trovato nella directory 'csv_results'."))
+		fmt.Println(color.New(color.FgRed).Sprint("Nessun file CSV trovato nella directory 'scraper_results/csv_results'."))
 		return ""
 	}
 

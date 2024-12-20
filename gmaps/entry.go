@@ -446,19 +446,21 @@ func normalizeNameserver(nameserver string) string {
 }
 
 func normalizeURL(url string) string {
-    // Rimuovi il protocollo
+    // Rimuovi il protocollo (http:// o https://)
     url = strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
 
-    // Dividi per il primo slash
+    // Dividi per il primo slash (per rimuovere percorsi)
     if idx := strings.Index(url, "/"); idx != -1 {
-        url = url[:idx] // Tieni solo la parte prima del primo slash
+        url = url[:idx]
     }
 
-    // Rimuovi eventuali parametri di query residui
+    // Rimuovi i parametri di query se presenti (con '?')
     if idx := strings.Index(url, "?"); idx != -1 {
-        url = url[:idx] // Tieni solo la parte prima del punto interrogativo
+        url = url[:idx]
     }
 
+    // Rimuovi eventuali caratteri finali non necessari
+    url = strings.TrimSuffix(url, "/")
     return url
 }
 
