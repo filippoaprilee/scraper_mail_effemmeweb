@@ -328,17 +328,15 @@ func cleanURLsInCSVFiles(dir string) error {
 }
 
 func cleanURLsInCSV(filePath string) error {
-    // Apri il file per la lettura
+    // Leggi tutto il file in memoria e chiudilo immediatamente
     file, err := os.Open(filePath)
     if err != nil {
         return fmt.Errorf("impossibile aprire il file: %v", err)
     }
 
-    // Chiudi il file appena abbiamo letto tutto il contenuto
-    defer file.Close()
-
     reader := csv.NewReader(file)
     rows, err := reader.ReadAll()
+    file.Close() // Chiudi subito il file originale
     if err != nil {
         return fmt.Errorf("errore nella lettura del file CSV: %v", err)
     }
@@ -372,7 +370,7 @@ func cleanURLsInCSV(filePath string) error {
         rows[i][urlColumnIndex] = cleanedURL
     }
 
-    // Scrive il file aggiornato
+    // Scrive il file aggiornato in un file temporaneo
     tempFilePath := filePath + ".tmp"
     tempFile, err := os.Create(tempFilePath)
     if err != nil {
@@ -382,18 +380,33 @@ func cleanURLsInCSV(filePath string) error {
     writer := csv.NewWriter(tempFile)
     defer writer.Flush()
 
-    // Scrivi il contenuto aggiornato
     if err := writer.WriteAll(rows); err != nil {
         tempFile.Close() // Chiudi il file temporaneo prima di eliminarlo
+        os.Remove(tempFilePath) // Rimuovi il file temporaneo in caso di errore
         return fmt.Errorf("errore durante la scrittura del file aggiornato: %v", err)
     }
 
     // Chiudi il file temporaneo prima di rinominarlo
-    tempFile.Close()
+    if err := tempFile.Close(); err != nil {
+        os.Remove(tempFilePath) // Rimuovi il file temporaneo in caso di errore
+        return fmt.Errorf("errore durante la chiusura del file temporaneo: %v", err)
+    }
 
-    // Rinominare il file temporaneo per sostituire il file originale
-    if err := os.Rename(tempFilePath, filePath); err != nil {
-        return fmt.Errorf("errore durante il rinominare il file temporaneo: %v", err)
+    // Rinomina con tentativi multipli in caso di accesso negato
+    maxRetries := 5
+    for attempt := 1; attempt <= maxRetries; attempt++ {
+        err = os.Rename(tempFilePath, filePath)
+        if err == nil {
+            break // Rinomina riuscita
+        }
+
+        if attempt == maxRetries {
+            os.Remove(tempFilePath) // Elimina il file temporaneo
+            return fmt.Errorf("errore durante il rinominare il file temporaneo: %v", err)
+        }
+
+        // Aspetta un po' prima di riprovare
+        time.Sleep(500 * time.Millisecond)
     }
 
     return nil
@@ -599,7 +612,7 @@ func askUser(prompt string) bool {
 
 func findLastGeneratedCSV() (string, error) {
 	// Cerca file CSV con il formato nomecategoria_data_ora.csv all'interno della directory csv_results
-	csvDir := "csv_results"
+	csvDir := "scraper_results/csv_results"
 	files, err := filepath.Glob(filepath.Join(csvDir, "*_*.csv"))
 	if err != nil {
 		return "", fmt.Errorf("errore durante la ricerca dei file CSV nella directory %s: %v", csvDir, err)

@@ -208,7 +208,7 @@ Bed & Breakfast La Casa di Gino,Bed & Breakfast,http://www.hotel-gabbiano.com,38
 Il Chiostro B&B,Bed & Breakfast,https://beb.it/ilchiostrotremiti,333 930 6775,"Piazza dei Lateranensi, 7",Isole Tremiti,,,https,Angular,No,"Amazon.com, Inc.",67,87,100.00,Sì,No
 Villa Skanderbeg,Bed & Breakfast,,327 887 7108,"Via della Cantina Sperimentale, 54",Isole Tremiti,,,,,,,,,,,
 AMARE B&B,Bed & Breakfast,https://amarebb.hotelino.top,324 619 7426,"Via Scalo Marittimo, 2",Rodi Garganico,,,https,Shopify,No,DEFT.COM,54,71,85.00,Sì,No
-B&B Rondinelle,Bed & Breakfast,http://www.bbrondinelle.it,349 395 6021,"Via della Cantina Sperimentale, 48",Isole Tremiti,,info@bbrondinelle.it,http,ASP.NET,No,Aruba S.p.A. Network,70,80,0.00,Sì,No
+B&B Rondinelle,Bed & Breakfast,http://www.bbrondinelle.it,349 395 6021,"Via della Cantina Sperimentale, 48",Isole Tremiti,,info@bbrondinelle.it,http,ASP.NET,No,Aruba S.p.A. Network,70,80,83.00,Sì,No
 Villa Paradiso,Bed & Breakfast,https://villa-paradiso.italiapaesaggiviaggi.top,0882 463400,"Via Beato Giovanni da Foligno, 2",Isole Tremiti,,,https,React,No,Contabo GmbH,52,80,85.00,Sì,No
 Hotel Kyrie Isole Tremiti,Hotel,http://www.hotelkyrieisoletremiti.it,0882 463232,"Loc. San Domino, Via dei Cameroni",Isole Tremiti,,kyrie@primahotel.it,http,Angular,No,Google LLC,67,89,85.00,Sì,No
 B&B Liu Palazzo Ducale,Bed & Breakfast,http://www.liupalazzoducale.it,0882 990258,"Via Dante, 19",Lesina,,,http,ASP.NET,No,Aruba S.p.A. Network,81,88,100.00,Sì,No
@@ -1747,7 +1747,7 @@ SALENTO GUESTHOUSE,Bed & Breakfast,http://www.salentoguesthouse.com,333 820 4566
 Tenuta Mirabolano,Hotel,,389 554 4629,Contrada Cornole,Carpignano Salentino,,,,,,,,,,,
 Vico Sant'Antonio,Bed & Breakfast,http://www.vicosantantonio.it,0836 572244,Vico S. Antonio,Carpignano Salentino,,,http,Joomla,No,"Amazon.com, Inc.",66,97,83.00,Sì,No
 Masseria San Cosimo Agriresort,Bed & Breakfast,http://www.masseriasancosimo.it,392 133 3085,contrada San Cosimo,Carpignano Salentino,,info@masseriasancosimo.it,http,React,No,Aruba S.p.A.,28,42,92.00,Sì,No
-Masseria Quaremme,Bed & Breakfast,http://www.masserianelsalento.com,338 321 1993,"Sp 212, km 1",Carpignano Salentino,,,http,WordPress,No,Aruba S.p.A. Network,69,95,83.00,Sì,Sì
+Masseria Quaremme,Bed & Breakfast,http://www.masserianelsalento.com,338 321 1993,"Sp 212, km 1",Carpignano Salentino,,,http,WordPress,No,Aruba S.p.A. Network,69,95,83.00,Sì,No
 Casa Del Sole Relax Room B&B,Bed & Breakfast,,331 642 0028,"Via Giulio Cesare, 49",Castrignano del Capo,,,,,,,,,,,
 Casa Branca,Bed & Breakfast,,334 989 6621,"Piazza S. Michele, 5",Castrignano del Capo,,,,,,,,,,,
 KALINIFTA RESIDENCE BB,Bed & Breakfast,http://www.kaliniftaresidence.it,350 149 8660,"SP48, 4",Carpignano Salentino,,,http,WordPress,Sì,WHG Hosting Services Ltd,57,94,85.00,Sì,No
@@ -1819,7 +1819,7 @@ Dafne B&B,Bed & Breakfast,http://www.bbdafne.it,0836 515810,"Via F. Gorgoni, 62"
 Bed and Breakfast Pietra Bianca Cutrofiano,Bed & Breakfast,http://www.pietrabianca.net,380 366 3512,"Viale della Costituzione, 40B",Cutrofiano,,,http,WordPress,Sì,Netsons s.r.l.,56,79,92.00,Sì,No
 Percebes Exclusive B&B,Bed & Breakfast,http://www.percebesbnb.it,328 004 7965,"Via Filippo Gorgoni, 57",Cutrofiano,,info@percebesbnb.it,http,WordPress,No,Server Plan S.r.l.,50,72,92.00,Sì,No
 Kaleidos Guest House,Bed & Breakfast,https://beb.it/kaleidosgalatina,349 584 4083,"Via Pietro Siciliani, 67",Galatina,,,https,Weebly,No,"Amazon.com, Inc.",81,91,100.00,Sì,No
-Casa Cardignan,Bed & Breakfast,http://www.casacardignan.com,328 855 5832,"Via Santi Filippo e Giacomo, 9",Diso,,info@casacardignan.com,http,WordPress,Sì,OVH SAS,43,50,0.00,Sì,No
+Casa Cardignan,Bed & Breakfast,http://www.casacardignan.com,328 855 5832,"Via Santi Filippo e Giacomo, 9",Diso,,info@casacardignan.com,http,WordPress,Sì,OVH SAS,43,50,100.00,Sì,No
 B&B Le 2 Vele Santa Cesarea Terme,Bed & Breakfast,,328 191 5627,Via Silvio Pellico,Cerfignano,,,,,,,,,,,
 Appartamenti Nino e Graziella,Bed & Breakfast,,328 858 1523,"Via Roma, 83",Santa Cesarea Terme,,,,,,,,,,,
 Agriturismo Piccapane,Agriturismo,https://ecobnb.piccapane.it,327 845 3459,SP363,Cutrofiano,,booking@piccapane.it,https,React,No,OVH ISP,43,69,100.00,Sì,No
@@ -2005,7 +2005,7 @@ B&B Hotel Frohsinn,Hotel,https://www.frohsinn.it,0471 849504,"Str. Surega, 36 39
 Hotel Ciasa Rü Blanch,Hotel,https://www.rublanch.com,0471 849423,"Str. Glira, 39",San Cassiano,,info@rublanch.com,https,ASP.NET,No,Hetzner Online GmbH,50,44,85.00,Sì,No
 B&B Travenanzes,Bed & Breakfast,https://www.travenanzes.it,0471 849450,"Strada Micurà de Rü, 19",San Cassiano,,info@travenanzes.it,https,Joomla,No,Hetzner Online GmbH,41,63,69.00,Sì,No
 Albergo Ciasa Roby,Alloggi al coperto,http://www.ciasaroby.it,0471 849525,"Strada Micurà de Rü, 67",San Cassiano,,info@ciasaroby.it,http,ASP.NET,No,Retelit Digital Services S.p.A.,75,94,85.00,Sì,No
-Pensione Scunëi,Pensione,http://www.scunei.it,0471 849489,"Strada Costadedoi, 124",San Cassiano,,,http,ASP.NET,No,Aruba S.p.A. Network,100,100,0.00,Sì,No
+Pensione Scunëi,Pensione,http://www.scunei.it,0471 849489,"Strada Costadedoi, 124",San Cassiano,,,http,ASP.NET,No,Aruba S.p.A. Network,100,100,91.00,Sì,No
 Ciasa Salares,Hotel,http://www.ciasasalares.it,0471 849445,"Strada Prè de Vì, 31",San Cassiano,,info@ciasasalares.it,http,ASP.NET,Sì,Aruba S.p.A,34,37,100.00,Sì,No
 Hotel Stoeres,Hotel,http://www.hotelstores.it,0471 849486,"Str. Plan, 22",San Cassiano,,info@hotelstores.it,http,WordPress,No,KUES DATA GmbH,49,80,92.00,Sì,No
 L'isola B&B,Bed & Breakfast,,340 389 8206,"Via Ludovico Muratori, 60",Porto Cesareo,,,,,,,,,,,
@@ -2139,7 +2139,7 @@ B&B Radici,Bed & Breakfast,,340 002 3533,"Via M. Pagano, 49",Trani,,,,,,,,,,,
 Vittoria B&B,Bed & Breakfast,http://www.vittoriaresortbnb.com,328 220 7242,"Viale Santa Caterina Novella, 98",Galatina,,masciullo.fabio@libero.it,http,React,No,Aruba S.p.A. Network,63,88,91.00,Sì,No
 Galatina1,Bed & Breakfast,http://www.bebgalatina1.it,329 618 1138,"Via Castel del Monte, 18",Galatina,,guiant48@yahoo.it,http,ASP.NET,No,Aruba S.p.A. Network,70,100,82.00,Sì,No
 Torre Canina B&B,Bed & Breakfast,https://www.bbtorrecanina.it,0883 171 5957,"Vico Corte Canina, 24",Trani,,,https,WordPress,No,Aruba S.p.A.,59,76,100.00,Sì,No
-Palazzo Garibaldi - Luxury Suites,Bed & Breakfast,http://www.palazzogaribaldi.com,388 473 0629,"Corso Garibaldi, 11",Galatina,,info@palazzogaribaldi.com,http,React,Sì,Keliweb S.R.L,0,0,0.00,Sì,No
+Palazzo Garibaldi - Luxury Suites,Bed & Breakfast,http://www.palazzogaribaldi.com,388 473 0629,"Corso Garibaldi, 11",Galatina,,info@palazzogaribaldi.com,http,React,Sì,Keliweb S.R.L,39,42,85.00,Sì,No
 Muragie del Castello,Hotel,http://www.muragiedelcastello.com,348 316 9877,"Via Fra' Diego Alvarez, 15",Trani,,info@muragiedelcastello.com,http,WordPress,Sì,Aruba S.p.A. Network,57,74,100.00,Sì,No
 B&B Montebello,Bed & Breakfast,,347 259 0638,"Vico Santo Spirito, 18",Trani,,,,,,,,,,,
 Dimore Blanco,Alloggio turistico,http://www.blancobedandbreakfast.it,345 174 6059,"Vico Sant’Agata, 2",Trani,,blanco.trani1@gmail.com,http,WordPress,No,Netsons Network,70,97,92.00,Sì,No

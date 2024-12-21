@@ -524,27 +524,39 @@ func detectCookieBanner(url string) (string, error) {
 
 // detectProtocol verifica se l'URL usa HTTP o HTTPS, controllando prima l'HTTP e poi l'HTTPS.
 func detectProtocol(url string) (string, error) {
-    if strings.HasPrefix(url, "https://") {
-        return "https", nil
-    } else if strings.HasPrefix(url, "http://") {
-        return "http", nil
-    }
+	// Aggiusta l'URL per rimuovere eventuali prefissi non standard
+	trimmedURL := strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
 
-    // Prova HTTPS per primo
-    httpsURL := "https://" + strings.TrimPrefix(url, "http://")
-    resp, err := http.Get(httpsURL)
-    if err == nil && resp.StatusCode == http.StatusOK {
-        return "https", nil
-    }
+	// Prova prima con HTTPS
+	httpsURL := "https://" + trimmedURL
+	if isURLAccessible(httpsURL) {
+		return "https", nil
+	}
 
-    // Se HTTPS fallisce, prova HTTP
-    httpURL := "http://" + strings.TrimPrefix(url, "https://")
-    resp, err = http.Get(httpURL)
-    if err == nil && resp.StatusCode == http.StatusOK {
-        return "http", nil
-    }
+	// Se HTTPS fallisce, prova HTTP
+	httpURL := "http://" + trimmedURL
+	if isURLAccessible(httpURL) {
+		return "http", nil
+	}
 
-    return "", fmt.Errorf("protocollo non rilevato per URL: %s", url)
+	// Nessun protocollo valido trovato
+	return "", fmt.Errorf("protocollo non rilevato per URL: %s", url)
+}
+
+// Funzione per verificare se un URL è accessibile
+func isURLAccessible(url string) bool {
+	client := http.Client{
+		Timeout: 5 * time.Second, // Timeout per evitare blocchi
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Verifica se lo stato HTTP indica successo
+	return resp.StatusCode >= 200 && resp.StatusCode < 400
 }
 
 // detectTechnology analizza la tecnologia usata da un sito web, combinando analisi statica e dinamica.
