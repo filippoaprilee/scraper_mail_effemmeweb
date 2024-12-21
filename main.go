@@ -328,10 +328,13 @@ func cleanURLsInCSVFiles(dir string) error {
 }
 
 func cleanURLsInCSV(filePath string) error {
+    // Apri il file per la lettura
     file, err := os.Open(filePath)
     if err != nil {
         return fmt.Errorf("impossibile aprire il file: %v", err)
     }
+
+    // Chiudi il file appena abbiamo letto tutto il contenuto
     defer file.Close()
 
     reader := csv.NewReader(file)
@@ -375,16 +378,25 @@ func cleanURLsInCSV(filePath string) error {
     if err != nil {
         return fmt.Errorf("errore nella creazione del file temporaneo: %v", err)
     }
-    defer tempFile.Close()
 
     writer := csv.NewWriter(tempFile)
     defer writer.Flush()
 
+    // Scrivi il contenuto aggiornato
     if err := writer.WriteAll(rows); err != nil {
+        tempFile.Close() // Chiudi il file temporaneo prima di eliminarlo
         return fmt.Errorf("errore durante la scrittura del file aggiornato: %v", err)
     }
 
-    return os.Rename(tempFilePath, filePath)
+    // Chiudi il file temporaneo prima di rinominarlo
+    tempFile.Close()
+
+    // Rinominare il file temporaneo per sostituire il file originale
+    if err := os.Rename(tempFilePath, filePath); err != nil {
+        return fmt.Errorf("errore durante il rinominare il file temporaneo: %v", err)
+    }
+
+    return nil
 }
 
 func cleanURL(url string) string {
