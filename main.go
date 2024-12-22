@@ -176,6 +176,106 @@ func getEmailTemplate(config EmailConfig, siteExists bool, protocol string, seoS
     return subject, body, nil
 }
 
+func filterCSV(inputFile string, outputFile string, categories []string) error {
+	// Apri il file di input
+	file, err := os.Open(inputFile)
+	if err != nil {
+		return fmt.Errorf("impossibile aprire il file di input: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	headers, err := reader.Read() // Leggi l'intestazione
+	if err != nil {
+		return fmt.Errorf("errore durante la lettura dell'intestazione: %v", err)
+	}
+
+	// Converti le categorie in una mappa per un confronto più rapido
+	categoryMap := make(map[string]bool)
+	for _, category := range categories {
+		categoryMap[category] = true
+	}
+
+	var filteredRows [][]string
+
+	// Filtra le righe
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return fmt.Errorf("errore durante la lettura delle righe: %v", err)
+		}
+
+		// Trova la colonna Categoria
+		categoryIndex := -1
+		for i, header := range headers {
+			if strings.ToLower(strings.TrimSpace(header)) == "categoria" {
+				categoryIndex = i
+				break
+			}
+		}
+
+		if categoryIndex == -1 {
+			return fmt.Errorf("colonna 'Categoria' non trovata nel file di input")
+		}
+
+		// Verifica se la riga appartiene alle categorie da mantenere
+		if categoryMap[record[categoryIndex]] {
+			filteredRows = append(filteredRows, record)
+		}
+	}
+
+	// Scrivi il file di output
+	outputDir := filepath.Dir(outputFile)
+	if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
+		return fmt.Errorf("errore nella creazione della directory di output: %v", err)
+	}
+
+	output, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("impossibile creare il file di output: %v", err)
+	}
+	defer output.Close()
+
+	writer := csv.NewWriter(output)
+	defer writer.Flush()
+
+	// Scrivi l'intestazione e le righe filtrate
+	if err := writer.Write(headers); err != nil {
+		return fmt.Errorf("errore durante la scrittura dell'intestazione: %v", err)
+	}
+	if err := writer.WriteAll(filteredRows); err != nil {
+		return fmt.Errorf("errore durante la scrittura delle righe filtrate: %v", err)
+	}
+
+	fmt.Printf("File filtrato creato con successo: %s\n", outputFile)
+	return nil
+}
+
+func selectInputFile(directory string) (string, error) {
+	files, err := filepath.Glob(filepath.Join(directory, "*.csv"))
+	if err != nil || len(files) == 0 {
+		return "", fmt.Errorf("nessun file CSV trovato nella directory %s", directory)
+	}
+
+	fmt.Println("File disponibili:")
+	for i, file := range files {
+		fmt.Printf("%d. %s\n", i+1, file)
+	}
+
+	var choice int
+	fmt.Print("Seleziona un file CSV (numero): ")
+	fmt.Scanln(&choice)
+
+	if choice < 1 || choice > len(files) {
+		return "", fmt.Errorf("scelta non valida")
+	}
+
+	return files[choice-1], nil
+}
+
 func main() {
 	clearTerminal()
 
@@ -193,119 +293,145 @@ func main() {
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
 	// Estrazione delle categorie
-    categories, err := extractCategoriesFromKeywordFile("./keyword.csv")
-    if err != nil {
-        fmt.Println("Errore nell'estrazione delle categorie:", err)
-        return
-    }
+	categories, err := extractCategoriesFromKeywordFile("./keyword.csv")
+	if err != nil {
+		fmt.Println("Errore nell'estrazione delle categorie:", err)
+		return
+	}
 
 	go func() {
-        <-signalChan
-        fmt.Println("\nCTRL+C rilevato. Attendi...")
-        cancel()
+		<-signalChan
+		fmt.Println("\nCTRL+C rilevato. Attendi...")
+		cancel()
 
-        // Controlla se un file CSV è stato generato
-        generatedCSV, err := findLastGeneratedCSV()
-        if err != nil {
-            fmt.Println(color.New(color.FgRed).Sprint("Errore durante la ricerca del file CSV: ", err))
-            return
-        }
+		// Controlla se un file CSV è stato generato
+		generatedCSV, err := findLastGeneratedCSV()
+		if err != nil {
+			fmt.Println(color.New(color.FgRed).Sprint("Errore durante la ricerca del file CSV: ", err))
+			return
+		}
 
-        if generatedCSV != "" {
-            // Elabora il file CSV senza richiedere una nuova selezione della categoria
-            handleCSVOptions(ctx, generatedCSV)
-        } else {
-            fmt.Println(color.New(color.FgRed).Sprint("Nessun file CSV generato. Uscita dal programma."))
-        }
+		if generatedCSV != "" {
+			// Elabora il file CSV senza richiedere una nuova selezione della categoria
+			handleCSVOptions(ctx, generatedCSV)
+		} else {
+			fmt.Println(color.New(color.FgRed).Sprint("Nessun file CSV generato. Uscita dal programma."))
+		}
 
-        os.Exit(0)
-    }()
+		os.Exit(0)
+	}()
 
 	// Menu principale
 	for {
-        fmt.Println("\nSeleziona un'opzione dal menu:")
-        fmt.Println("1. 🕵️‍♂️ Avvia lo scraping per raccogliere dati da Google Maps (Richiede connessione Internet).")
-        fmt.Println("2. 💾 Converti un file CSV esistente in istruzioni SQL.")
-        fmt.Println("3. 📧 Genera un file email da un CSV.")
-        fmt.Println("4. 📤 Invia email utilizzando un file CSV.")
-        fmt.Println("5. 🧹 Pulisci URL dei siti web.")
-        fmt.Println("6. ❌ Esci dall'applicazione.")
-        fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-6): "))
+		fmt.Println("\nSeleziona un'opzione dal menu:")
+		fmt.Println("1. 🕵️‍♂️ Avvia lo scraping per raccogliere dati da Google Maps (Richiede connessione Internet).")
+		fmt.Println("2. 💾 Converti un file CSV esistente in istruzioni SQL.")
+		fmt.Println("3. 📧 Genera un file email da un CSV.")
+		fmt.Println("4. 📤 Invia email utilizzando un file CSV.")
+		fmt.Println("5. 🧹 Pulisci URL dei siti web.")
+		fmt.Println("6. 🔄 Filtra un CSV per categorie specifiche.")
+		fmt.Println("7. ❌ Esci dall'applicazione.")
+		fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-7): "))
 
-        reader := bufio.NewReader(os.Stdin)
-        choice, _ := reader.ReadString('\n')
-        choice = strings.TrimSpace(choice)
+		reader := bufio.NewReader(os.Stdin)
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
 
-        switch choice {
-        case "1":
-            if confirmAction("Confermi di voler avviare il processo di scraping? Inserisci 'y' per continuare o 'n' per annullare:") {
-                if err := runScrapingFlow(ctx, categories, &generatedCSV); err != nil {
-                    fmt.Println(color.New(color.FgRed).Sprintf("Errore durante lo scraping: %v", err))
-                }
-            }
-        case "2":
-            csvFile := getExistingCSVFile()
-            if csvFile != "" {
-                // Inizia direttamente la generazione del file SQL per il CSV selezionato
-                fmt.Printf("Generazione file SQL per il CSV: %s\n", csvFile)
-                
-                // Genera il file SQL senza ulteriori richieste
-                category := extractCategoryFromFileName(csvFile) // Estrai la categoria dal nome del file CSV
-                if err := generateSQLFromCSV(ctx, csvFile, category); err != nil {
-                    fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file SQL: %v", err))
-                } else {
-                    fmt.Println("File SQL generato con successo.")
-                }
-            }
-        case "3":
-            csvFile := getExistingCSVFile()
-            if csvFile != "" {
-                // Inizia direttamente la generazione del file email per il CSV selezionato
-                fmt.Printf("Generazione file email per il CSV: %s\n", csvFile)
-        
-                // Genera il file email senza ulteriori richieste
-                category := extractCategoryFromFileName(csvFile) // Estrai la categoria dal nome del file CSV
-                if err := generateEmailsToSend(csvFile, category); err != nil {
-                    fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file email: %v", err))
-                } else {
-                    fmt.Println("File email generato con successo.")
-                }
-            }
-        case "4":
-            csvFile := getExistingCSVFile()
-            if csvFile != "" {
-                // Inizia direttamente l'invio delle email per il CSV selezionato
-                fmt.Printf("Invio email per il CSV: %s\n", csvFile)
-                
-                // Passa il file CSV per l'invio delle email
-                smtpConfig := map[string]string{
-                    "server":   "mail.effemmeweb.it",
-                    "port":     "465",
-                    "user":     "info@effemmeweb.it",
-                    "password": "Ludovica2021", // Assicurati di usare la password corretta
-                }
-        
-                if err := processEmails(ctx, csvFile, "sendmaillog.csv", smtpConfig); err != nil {
-                    fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio delle email: %v", err))
-                } else {
-                    fmt.Println("Email inviate con successo.")
-                }
-            }
-        case "5":
-            fmt.Println("Pulizia degli URL nei file CSV in corso...")
-            csvDir := filepath.Join(baseDir, "csv_results")
-            if err := cleanURLsInCSVFiles(csvDir); err != nil {
-                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la pulizia degli URL nei file CSV: %v", err))
-            } else {
-                fmt.Println(color.New(color.FgGreen).Sprint("Pulizia degli URL completata con successo."))
-            }  
-        case "6":
-            fmt.Println(color.New(color.FgGreen).Sprint("Uscita dal programma. Arrivederci!"))
-            return      
-        default:
-            fmt.Println(color.New(color.FgRed).Sprint("Opzione non valida. Riprova."))
-        }
-    }
+		switch choice {
+		case "1":
+			if confirmAction("Confermi di voler avviare il processo di scraping? Inserisci 'y' per continuare o 'n' per annullare:") {
+				if err := runScrapingFlow(ctx, categories, &generatedCSV); err != nil {
+					fmt.Println(color.New(color.FgRed).Sprintf("Errore durante lo scraping: %v", err))
+				}
+			}
+		case "2":
+			csvFile := getExistingCSVFile()
+			if csvFile != "" {
+				// Inizia direttamente la generazione del file SQL per il CSV selezionato
+				fmt.Printf("Generazione file SQL per il CSV: %s\n", csvFile)
+				
+				// Genera il file SQL senza ulteriori richieste
+				category := extractCategoryFromFileName(csvFile) // Estrai la categoria dal nome del file CSV
+				if err := generateSQLFromCSV(ctx, csvFile, category); err != nil {
+					fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file SQL: %v", err))
+				} else {
+					fmt.Println("File SQL generato con successo.")
+				}
+			}
+		case "3":
+			csvFile := getExistingCSVFile()
+			if csvFile != "" {
+				// Inizia direttamente la generazione del file email per il CSV selezionato
+				fmt.Printf("Generazione file email per il CSV: %s\n", csvFile)
+			
+				// Genera il file email senza ulteriori richieste
+				category := extractCategoryFromFileName(csvFile) // Estrai la categoria dal nome del file CSV
+				if err := generateEmailsToSend(csvFile, category); err != nil {
+					fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file email: %v", err))
+				} else {
+					fmt.Println("File email generato con successo.")
+				}
+			}
+		case "4":
+			csvFile := getExistingCSVFile()
+			if csvFile != "" {
+				// Inizia direttamente l'invio delle email per il CSV selezionato
+				fmt.Printf("Invio email per il CSV: %s\n", csvFile)
+				
+				// Passa il file CSV per l'invio delle email
+				smtpConfig := map[string]string{
+					"server":   "mail.effemmeweb.it",
+					"port":     "465",
+					"user":     "info@effemmeweb.it",
+					"password": "Ludovica2021", // Assicurati di usare la password corretta
+				}
+			
+				if err := processEmails(ctx, csvFile, "sendmaillog.csv", smtpConfig); err != nil {
+					fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio delle email: %v", err))
+				} else {
+					fmt.Println("Email inviate con successo.")
+				}
+			}
+		case "5":
+			fmt.Println("Pulizia degli URL nei file CSV in corso...")
+			csvDir := filepath.Join(baseDir, "csv_results")
+			if err := cleanURLsInCSVFiles(csvDir); err != nil {
+				fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la pulizia degli URL nei file CSV: %v", err))
+			} else {
+				fmt.Println(color.New(color.FgGreen).Sprint("Pulizia degli URL completata con successo."))
+			}  
+		case "6":
+			fmt.Println("Filtraggio di un file CSV per categorie specifiche in corso...")
+			inputDir := filepath.Join(baseDir, "csv_results")
+			outputDir := filepath.Join(baseDir, "csv_results/output_filter")
+
+			inputFile, err := selectInputFile(inputDir)
+			if err != nil {
+				fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la selezione del file di input: %v", err))
+				continue
+			}
+
+			fmt.Print("Inserisci le categorie da mantenere (separate da virgola): ")
+			categoriesInput, _ := reader.ReadString('\n')
+			categoriesInput = strings.TrimSpace(categoriesInput)
+			categories := strings.Split(categoriesInput, ",")
+			for i := range categories {
+				categories[i] = strings.TrimSpace(categories[i])
+			}
+
+			outputFile := filepath.Join(outputDir, "filtered_output.csv")
+			if err := filterCSV(inputFile, outputFile, categories); err != nil {
+				fmt.Println(color.New(color.FgRed).Sprintf("Errore durante il filtraggio del CSV: %v", err))
+			} else {
+				fmt.Println(color.New(color.FgGreen).Sprint("File CSV filtrato generato con successo."))
+			}
+		case "7":
+			fmt.Println(color.New(color.FgGreen).Sprint("Uscita dal programma. Arrivederci!"))
+			return      
+		default:
+			fmt.Println(color.New(color.FgRed).Sprint("Opzione non valida. Riprova."))
+		}
+	}
 }
 
 func cleanURLsInCSVFiles(dir string) error {
@@ -813,7 +939,7 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
 }
 
 func cleanLastRowFromCSV(filePath string) error {
-	// Apri il file per la lettura
+	// Leggi tutte le righe del file in memoria
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("impossibile aprire il file CSV: %v", err)
@@ -821,58 +947,38 @@ func cleanLastRowFromCSV(filePath string) error {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	var rows [][]string
-
-	// Leggi tutte le righe dal CSV
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			// Se si verifica un errore di lettura, lo logghiamo ma continuiamo
-			fmt.Printf("Errore durante la lettura del CSV: %v\n", err)
-			continue
-		}
-		rows = append(rows, record)
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return fmt.Errorf("errore nella lettura del file CSV: %v", err)
 	}
 
-	// Se il file ha più di una riga, rimuoviamo l'ultima
 	if len(rows) > 1 {
-		// Verifica che l'ultima riga abbia il numero corretto di colonne
-		expectedColumns := len(rows[0])
+		// Controlla se l'ultima riga ha un numero di colonne errato rispetto all'intestazione
+		headerLength := len(rows[0])
 		lastRow := rows[len(rows)-1]
-		if len(lastRow) != expectedColumns {
-			fmt.Println("Ultima riga con numero di campi errato, la rimuovo.")
+		if len(lastRow) != headerLength {
+			fmt.Println("Ultima riga non valida, rimuovendola...")
 			rows = rows[:len(rows)-1]
 		}
 	} else if len(rows) == 1 && len(rows[0]) == 0 {
-		// Se il CSV ha solo una riga vuota, rimuovila
+		// Rimuovi un file vuoto con una singola riga vuota
 		rows = nil
 	}
 
-	// Scrivi il CSV aggiornato
-	tempFilePath := filePath + ".tmp"
-	tempFile, err := os.Create(tempFilePath)
+	// Scrivi le righe aggiornate direttamente nel file originale
+	outputFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return fmt.Errorf("errore durante la creazione del file temporaneo: %v", err)
+		return fmt.Errorf("errore durante l'apertura del file CSV per la sovrascrittura: %v", err)
 	}
-	defer tempFile.Close()
+	defer outputFile.Close()
 
-	// Inizializza un writer CSV
-    writer := csv.NewWriter(tempFile)
-    defer writer.Flush()
-
-    // Scrivi il CSV pulito
-    if err := writer.WriteAll(rows); err != nil {
-        return fmt.Errorf("errore durante la scrittura nel file CSV: %v", err)
-    }
-
-	// Sostituisci il file originale con il file temporaneo
-	if err := os.Rename(tempFilePath, filePath); err != nil {
-		return fmt.Errorf("errore durante la sostituzione del file CSV: %v", err)
+	writer := csv.NewWriter(outputFile)
+	if err := writer.WriteAll(rows); err != nil {
+		return fmt.Errorf("errore durante la scrittura nel file CSV: %v", err)
 	}
+	writer.Flush()
 
+	fmt.Println("File CSV aggiornato con successo.")
 	return nil
 }
 
