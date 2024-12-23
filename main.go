@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+    "sort"
 	"syscall"
 	"time"
 
@@ -33,6 +34,7 @@ type EmailConfig struct {
         Body    []string `json:"body"`
     } `json:"templates"`
 }
+
 
 // Funzione per cancellare il terminale
 func clearTerminal() {
@@ -84,18 +86,17 @@ func centerText(text string, terminalWidth int) string {
 func printUsage() {
     banner := `
 ======================================================================================================================
-			🚀 EFFEMMEWEB UTILITY 🚀
+                        🚀 BENVENUTO IN EFFEMMEWEB UTILITY 🚀
 ======================================================================================================================
-		███████╗███████╗███████╗███████╗███╗   ███╗███╗   ███╗███████╗██╗    ██╗███████╗██████╗ 
-		██╔════╝██╔════╝██╔════╝██╔════╝████╗ ████║████╗ ████║██╔════╝██║    ██║██╔════╝██╔══██╗
-		█████╗  █████╗  █████╗  █████╗  ██╔████╔██║██╔████╔██║█████╗  ██║ █╗ ██║█████╗  ██████╔╝
-		██╔══╝  ██╔══╝  ██╔══╝  ██╔══╝  ██║╚██╔╝██║██║╚██╔╝██║██╔══╝  ██║███╗██║██╔══╝  ██╔══██╗
-		███████╗██║     ██║     ███████╗██║ ╚═╝ ██║██║ ╚═╝ ██║███████╗╚███╔███╔╝███████╗██████╔╝
-		╚══════╝╚═╝     ╚═╝     ╚══════╝╚═╝     ╚═╝╚═╝     ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═════╝ 
-																					
-======================================================================================================================
-    
-`
+███████╗███████╗███████╗███████╗███╗   ███╗███╗   ███╗███████╗██╗    ██╗███████╗██████╗ 
+██╔════╝██╔════╝██╔════╝██╔════╝████╗ ████║████╗ ████║██╔════╝██║    ██║██╔════╝██╔══██╗
+█████╗  █████╗  █████╗  █████╗  ██╔████╔██║██╔████╔██║█████╗  ██║ █╗ ██║█████╗  ██████╔╝
+██╔══╝  ██╔══╝  ██╔══╝  ██╔══╝  ██║╚██╔╝██║██║╚██╔╝██║██╔══╝  ██║███╗██║██╔══╝  ██╔══██╗
+███████╗██║     ██║     ███████╗██║ ╚═╝ ██║██║ ╚═╝ ██║███████╗╚███╔███╔╝███████╗██████╔╝
+╚══════╝╚═╝     ╚═╝     ╚══════╝╚═╝     ╚═╝╚═╝     ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═════╝ 
+
+======================================================================================================================`
+
     terminalWidth := getTerminalWidth()
     centeredBanner := centerText(banner, terminalWidth)
 
@@ -105,8 +106,8 @@ func printUsage() {
     important := color.New(color.FgRed, color.Bold).SprintFunc()
 
     // Mostra il banner centrato
-    fmt.Println(title(centeredBanner)) 
-    fmt.Println(title("Benvenuto in EFFEMMEWEB Utility, il tuo strumento tuttofare!\n"))
+    fmt.Println(title(centeredBanner))
+    fmt.Println(title("Benvenuto in EFFEMMEWEB Utility, il tuo strumento multifunzione!\n"))
 
     fmt.Println(section("📘 COME SI USA:"))
     fmt.Println("1️⃣  Assicurati che i seguenti file di configurazione siano nella directory principale:")
@@ -114,16 +115,20 @@ func printUsage() {
     fmt.Printf("   - %s: %s\n", highlight("comuni.csv"), "Elenco dei comuni per combinazioni di ricerca.")
     fmt.Printf("   - %s: %s\n", highlight("email_config.json"), "Configurazione email (oggetto e corpo).\n")
 
-    fmt.Println(section("⚙️  FUNZIONALITÀ DISPONIBILI:"))
-    fmt.Printf("   ➤ %s: Genera un file CSV con i risultati dello scraping da Google Maps.\n", highlight("Scraping"))
-    fmt.Println("       📌 Dettagli inclusi: Nome Attività, Categoria, Sito Web, Telefono, ecc.")
-    fmt.Printf("   ➤ %s: Converte i risultati del CSV in istruzioni SQL per il database.\n", highlight("Generazione SQL"))
-    fmt.Printf("   ➤ %s: Converte i risultati del CSV in un file email per inviarle ai destinatari.\n", highlight("Generazione Email"))
-    fmt.Printf("   ➤ %s: Invia email personalizzate utilizzando i destinatari da un file CSV.\n", highlight("Invio Email"))
+    fmt.Println(section("⚙️  MENU PRINCIPALE:"))
+    fmt.Printf("   ➤ %s: Avvia lo scraping per raccogliere dati da Google Maps.\n", highlight("1. Scraping"))
+    fmt.Println("       📌 Raccoglie dati come Nome Attività, Categoria, Sito Web, Telefono, ecc.")
+    fmt.Printf("   ➤ %s: Converte un file CSV esistente in istruzioni SQL.\n", highlight("2. Generazione SQL"))
+    fmt.Printf("   ➤ %s: Genera un file email da un CSV per i destinatari.\n", highlight("3. Generazione Email"))
+    fmt.Printf("   ➤ %s: Invia email personalizzate utilizzando un file CSV.\n", highlight("4. Invio Email"))
+    fmt.Printf("   ➤ %s: Pulisce gli URL nei file CSV per eliminare parametri non necessari.\n", highlight("5. Pulizia URL"))
+    fmt.Printf("   ➤ %s: Filtra un CSV in base a categorie specifiche.\n", highlight("6. Filtra CSV"))
+    fmt.Printf("   ➤ %s: Invia una email di prova per verificare il sistema di invio email.\n", highlight("7. Email di Test"))
+    fmt.Printf("   ➤ %s: Esci dall'applicazione.\n", highlight("8. Esci"))
 
     fmt.Println(section("🔔 NOTE IMPORTANTI:"))
     fmt.Printf("   - %s\n", important("Puoi interrompere l'esecuzione in sicurezza usando CTRL+C."))
-    fmt.Println("   - Assicurati di avere una connessione a internet per utilizzare scraping e invio email.")
+    fmt.Println("   - Assicurati di avere una connessione a internet per scraping e invio email.")
 
     fmt.Println(title(centeredBanner)) // Mostra il banner centrato anche alla fine
 }
@@ -151,21 +156,21 @@ func loadEmailConfig(filePath string) (EmailConfig, error) {
     return config, nil
 }
 
-func getEmailTemplate(config EmailConfig, siteExists bool, protocol string, seoScore float64, cookieBanner string) (string, string, error) {
+func getEmailTemplate(config EmailConfig, siteExists bool, protocol string, seoScore float64, cookieBanner, siteStatus, website, technology string) (string, string, error) {
     var templateKey string
 
+    // Determina il templateKey in base ai parametri
     if !siteExists {
-        templateKey = "site_not_found"
-    } else if protocol == "http" {
-        templateKey = "site_http"
-    } else if seoScore < 75 {
-        templateKey = "seo_score_low"
-    } else if cookieBanner == "missing" {
-        templateKey = "cookie_banner_missing"
+        templateKey = "no_website"
+    } else if siteStatus == "unavailable" {
+        templateKey = "website_unavailable"
+    } else if siteStatus == "maintenance" {
+        templateKey = "website_under_maintenance"
     } else {
-        templateKey = "default"  // Impostiamo un template di default se nessuna delle condizioni precedenti è soddisfatta
+        templateKey = "website_review"
     }
 
+    // Cerca il template nella configurazione
     template, exists := config.Templates[templateKey]
     if !exists {
         return "", "", fmt.Errorf("template non trovato per la chiave: %s", templateKey)
@@ -173,107 +178,166 @@ func getEmailTemplate(config EmailConfig, siteExists bool, protocol string, seoS
 
     subject := template.Subject
     body := strings.Join(template.Body, "\n")
+
+    // Sostituzione dinamica dei placeholder
+    body = strings.ReplaceAll(body, "{website}", website)
+    body = strings.ReplaceAll(body, "{protocol_review}", func() string {
+        if protocol == "http" {
+            return "Il tuo sito non utilizza un protocollo sicuro (HTTPS)."
+        }
+        return "Il tuo sito utilizza un protocollo sicuro (HTTPS)."
+    }())
+    body = strings.ReplaceAll(body, "{technology_review}", func() string {
+        if technology != "" {
+            return fmt.Sprintf("Il tuo sito utilizza %s. Possiamo supportarti con questa piattaforma.", technology)
+        }
+        return "Non abbiamo identificato la tecnologia utilizzata dal sito."
+    }())
+    body = strings.ReplaceAll(body, "{cookie_review}", func() string {
+        if cookieBanner == "present" {
+            return "Il sito ha un banner per i cookie."
+        }
+        return "Il sito non ha un banner per i cookie."
+    }())
+    body = strings.ReplaceAll(body, "{performance_review}", func() string {
+        if seoScore < 70 {
+            return "Le performance del sito sono sotto la media. Consigliamo ottimizzazioni."
+        }
+        return "Le performance del sito sono buone."
+    }())
+
     return subject, body, nil
 }
 
-func filterCSV(inputFile string, outputFile string, categories []string) error {
-	// Apri il file di input
-	file, err := os.Open(inputFile)
-	if err != nil {
-		return fmt.Errorf("impossibile aprire il file di input: %v", err)
-	}
-	defer file.Close()
+func filterCSV(inputFile string, outputFile string) error {
+    // Apri il file di input
+    file, err := os.Open(inputFile)
+    if err != nil {
+        return fmt.Errorf("impossibile aprire il file di input: %v", err)
+    }
+    defer file.Close()
 
-	reader := csv.NewReader(file)
-	headers, err := reader.Read() // Leggi l'intestazione
-	if err != nil {
-		return fmt.Errorf("errore durante la lettura dell'intestazione: %v", err)
-	}
+    reader := csv.NewReader(file)
+    headers, err := reader.Read() // Leggi l'intestazione
+    if err != nil {
+        return fmt.Errorf("errore durante la lettura dell'intestazione: %v", err)
+    }
 
-	// Converti le categorie in una mappa per un confronto più rapido
-	categoryMap := make(map[string]bool)
-	for _, category := range categories {
-		categoryMap[category] = true
-	}
+    // Trova la colonna "Categoria"
+    categoryIndex := -1
+    for i, header := range headers {
+        if strings.ToLower(strings.TrimSpace(header)) == "categoria" {
+            categoryIndex = i
+            break
+        }
+    }
 
-	var filteredRows [][]string
+    if categoryIndex == -1 {
+        return fmt.Errorf("colonna 'Categoria' non trovata nel file di input")
+    }
 
-	// Filtra le righe
-	for {
-		record, err := reader.Read()
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return fmt.Errorf("errore durante la lettura delle righe: %v", err)
-		}
+    // Raccogli tutte le categorie uniche
+    categorySet := make(map[string]struct{})
+    var rows [][]string
 
-		// Trova la colonna Categoria
-		categoryIndex := -1
-		for i, header := range headers {
-			if strings.ToLower(strings.TrimSpace(header)) == "categoria" {
-				categoryIndex = i
-				break
-			}
-		}
+    for {
+        record, err := reader.Read()
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            return fmt.Errorf("errore durante la lettura delle righe: %v", err)
+        }
 
-		if categoryIndex == -1 {
-			return fmt.Errorf("colonna 'Categoria' non trovata nel file di input")
-		}
+        if len(record) > categoryIndex {
+            category := strings.TrimSpace(record[categoryIndex])
+            categorySet[category] = struct{}{}
+            rows = append(rows, record)
+        }
+    }
 
-		// Verifica se la riga appartiene alle categorie da mantenere
-		if categoryMap[record[categoryIndex]] {
-			filteredRows = append(filteredRows, record)
-		}
-	}
+    // Stampa le categorie disponibili
+    fmt.Println("📋 Categorie disponibili nel file:")
+    categoriesList := make([]string, 0, len(categorySet))
+    for category := range categorySet {
+        categoriesList = append(categoriesList, category)
+    }
+    sort.Strings(categoriesList) // Ordina alfabeticamente
+    for i, category := range categoriesList {
+        fmt.Printf("%d. %s\n", i+1, category)
+    }
 
-	// Scrivi il file di output
-	outputDir := filepath.Dir(outputFile)
-	if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
-		return fmt.Errorf("errore nella creazione della directory di output: %v", err)
-	}
+    // Richiedi le categorie da mantenere
+    fmt.Print("\nInserisci i numeri delle categorie da mantenere, separati da virgola: ")
+    var input string
+    fmt.Scanln(&input)
 
-	output, err := os.Create(outputFile)
-	if err != nil {
-		return fmt.Errorf("impossibile creare il file di output: %v", err)
-	}
-	defer output.Close()
+    selectedIndexes := strings.Split(input, ",")
+    selectedCategories := make(map[string]bool)
+    for _, indexStr := range selectedIndexes {
+        index, err := strconv.Atoi(strings.TrimSpace(indexStr))
+        if err != nil || index < 1 || index > len(categoriesList) {
+            fmt.Printf("⚠️ Indice non valido: %s\n", indexStr)
+            continue
+        }
+        selectedCategories[categoriesList[index-1]] = true
+    }
 
-	writer := csv.NewWriter(output)
-	defer writer.Flush()
+    // Filtra le righe
+    var filteredRows [][]string
+    for _, record := range rows {
+        if len(record) > categoryIndex && selectedCategories[record[categoryIndex]] {
+            filteredRows = append(filteredRows, record)
+        }
+    }
 
-	// Scrivi l'intestazione e le righe filtrate
-	if err := writer.Write(headers); err != nil {
-		return fmt.Errorf("errore durante la scrittura dell'intestazione: %v", err)
-	}
-	if err := writer.WriteAll(filteredRows); err != nil {
-		return fmt.Errorf("errore durante la scrittura delle righe filtrate: %v", err)
-	}
+    // Scrivi il file di output
+    outputDir := filepath.Dir(outputFile)
+    if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
+        return fmt.Errorf("errore nella creazione della directory di output: %v", err)
+    }
 
-	fmt.Printf("File filtrato creato con successo: %s\n", outputFile)
-	return nil
+    output, err := os.Create(outputFile)
+    if err != nil {
+        return fmt.Errorf("impossibile creare il file di output: %v", err)
+    }
+    defer output.Close()
+
+    writer := csv.NewWriter(output)
+    defer writer.Flush()
+
+    // Scrivi l'intestazione e le righe filtrate
+    if err := writer.Write(headers); err != nil {
+        return fmt.Errorf("errore durante la scrittura dell'intestazione: %v", err)
+    }
+    if err := writer.WriteAll(filteredRows); err != nil {
+        return fmt.Errorf("errore durante la scrittura delle righe filtrate: %v", err)
+    }
+
+    fmt.Printf("✅ File filtrato creato con successo: %s\n", outputFile)
+    return nil
 }
 
 func selectInputFile(directory string) (string, error) {
-	files, err := filepath.Glob(filepath.Join(directory, "*.csv"))
-	if err != nil || len(files) == 0 {
-		return "", fmt.Errorf("nessun file CSV trovato nella directory %s", directory)
-	}
+    files, err := filepath.Glob(filepath.Join(directory, "*.csv"))
+    if err != nil || len(files) == 0 {
+        return "", fmt.Errorf("nessun file CSV trovato nella directory %s", directory)
+    }
 
-	fmt.Println("File disponibili:")
-	for i, file := range files {
-		fmt.Printf("%d. %s\n", i+1, file)
-	}
+    fmt.Println("📂 File disponibili:")
+    for i, file := range files {
+        fmt.Printf("%d. %s\n", i+1, file)
+    }
 
-	var choice int
-	fmt.Print("Seleziona un file CSV (numero): ")
-	fmt.Scanln(&choice)
+    var choice int
+    fmt.Print("Seleziona un file CSV (numero): ")
+    fmt.Scanln(&choice)
 
-	if choice < 1 || choice > len(files) {
-		return "", fmt.Errorf("scelta non valida")
-	}
+    if choice < 1 || choice > len(files) {
+        return "", fmt.Errorf("scelta non valida")
+    }
 
-	return files[choice-1], nil
+    return files[choice-1], nil
 }
 
 func main() {
@@ -324,14 +388,15 @@ func main() {
 	// Menu principale
 	for {
 		fmt.Println("\nSeleziona un'opzione dal menu:")
-		fmt.Println("1. 🕵️‍♂️ Avvia lo scraping per raccogliere dati da Google Maps (Richiede connessione Internet).")
+		fmt.Println("1. 🕵️‍♂️  Avvia lo scraping per raccogliere dati da Google Maps (Richiede connessione Internet).")
 		fmt.Println("2. 💾 Converti un file CSV esistente in istruzioni SQL.")
 		fmt.Println("3. 📧 Genera un file email da un CSV.")
 		fmt.Println("4. 📤 Invia email utilizzando un file CSV.")
 		fmt.Println("5. 🧹 Pulisci URL dei siti web.")
 		fmt.Println("6. 🔄 Filtra un CSV per categorie specifiche.")
-		fmt.Println("7. ❌ Esci dall'applicazione.")
-		fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-7): "))
+        fmt.Println("7. 📧 Invia una email di prova per verificare il sistema di invio email.")
+        fmt.Println("8. ❌ Esci dall'applicazione.")
+		fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-8): "))
 
 		reader := bufio.NewReader(os.Stdin)
 		choice, _ := reader.ReadString('\n')
@@ -373,25 +438,32 @@ func main() {
 				}
 			}
 		case "4":
-			csvFile := getExistingCSVFile()
-			if csvFile != "" {
-				// Inizia direttamente l'invio delle email per il CSV selezionato
-				fmt.Printf("Invio email per il CSV: %s\n", csvFile)
-				
-				// Passa il file CSV per l'invio delle email
-				smtpConfig := map[string]string{
-					"server":   "mail.effemmeweb.it",
-					"port":     "465",
-					"user":     "info@effemmeweb.it",
-					"password": "Ludovica2021", // Assicurati di usare la password corretta
-				}
-			
-				if err := processEmails(ctx, csvFile, "sendmaillog.csv", smtpConfig); err != nil {
-					fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio delle email: %v", err))
-				} else {
-					fmt.Println("Email inviate con successo.")
-				}
-			}
+            fmt.Println("📤 Invia email utilizzando un file CSV.")
+            
+            emailDir := filepath.Join(baseDir, "email_results")
+            csvFile, err := selectInputFile(emailDir) // Cerca i file CSV nella directory delle email
+            if err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la selezione del file CSV: %v", err))
+                break
+            }
+        
+            fmt.Printf("Invio email per il file CSV: %s\n", csvFile)
+        
+            // Configurazione SMTP
+            smtpConfig := map[string]string{
+                "server":   "mail.effemmeweb.it",
+                "port":     "465",
+                "user":     "info@effemmeweb.it",
+                "password": "Ludovica2021", // Usa la password corretta
+            }
+        
+            // Avvia l'invio delle email utilizzando il file CSV selezionato
+            if err := processEmails(ctx, csvFile, "sendmaillog.csv", smtpConfig); err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio delle email: %v", err))
+            } else {
+                fmt.Println(color.New(color.FgGreen).Sprint("Email inviate con successo."))
+            }
+        
 		case "5":
 			fmt.Println("Pulizia degli URL nei file CSV in corso...")
 			csvDir := filepath.Join(baseDir, "csv_results")
@@ -401,33 +473,115 @@ func main() {
 				fmt.Println(color.New(color.FgGreen).Sprint("Pulizia degli URL completata con successo."))
 			}  
 		case "6":
-			fmt.Println("Filtraggio di un file CSV per categorie specifiche in corso...")
-			inputDir := filepath.Join(baseDir, "csv_results")
-			outputDir := filepath.Join(baseDir, "csv_results/output_filter")
+			fmt.Println("🔄 Filtraggio di un file CSV per categorie specifiche in corso...")
+            inputDir := filepath.Join(baseDir, "csv_results")
+            outputDir := filepath.Join(baseDir, "csv_results/output_filter")
 
-			inputFile, err := selectInputFile(inputDir)
-			if err != nil {
-				fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la selezione del file di input: %v", err))
-				continue
-			}
-
-			fmt.Print("Inserisci le categorie da mantenere (separate da virgola): ")
-			categoriesInput, _ := reader.ReadString('\n')
-			categoriesInput = strings.TrimSpace(categoriesInput)
-			categories := strings.Split(categoriesInput, ",")
-			for i := range categories {
-				categories[i] = strings.TrimSpace(categories[i])
-			}
+            inputFile, err := selectInputFile(inputDir)
+            if err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la selezione del file di input: %v", err))
+                continue
+            }
 
 			outputFile := filepath.Join(outputDir, "filtered_output.csv")
-			if err := filterCSV(inputFile, outputFile, categories); err != nil {
-				fmt.Println(color.New(color.FgRed).Sprintf("Errore durante il filtraggio del CSV: %v", err))
-			} else {
-				fmt.Println(color.New(color.FgGreen).Sprint("File CSV filtrato generato con successo."))
-			}
-		case "7":
+            if err := filterCSV(inputFile, outputFile); err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante il filtraggio del CSV: %v", err))
+            } else {
+                fmt.Println(color.New(color.FgGreen).Sprint("✅ File CSV filtrato generato con successo."))
+            }
+
+        case "7":
+            fmt.Println(color.New(color.FgCyan).Sprint("\nOpzione selezionata: Manda email di test"))
+            fmt.Print("Inserisci l'email del destinatario: ")
+            reader := bufio.NewReader(os.Stdin)
+            testEmail, _ := reader.ReadString('\n')
+            testEmail = strings.TrimSpace(testEmail)
+        
+            fmt.Print("Il destinatario ha un sito web? (y/n): ")
+            hasSite, _ := reader.ReadString('\n')
+            hasSite = strings.TrimSpace(strings.ToLower(hasSite))
+        
+            smtpConfig := map[string]string{
+                "server":   "mail.effemmeweb.it",
+                "port":     "465",
+                "user":     "info@effemmeweb.it",
+                "password": "Ludovica2021",
+            }
+        
+            emailConfigPath := "email_config.json" // Percorso del file JSON
+            var err error
+        
+            if hasSite == "y" {
+                fmt.Print("Inserisci il dominio del sito (es: www.example.com): ")
+                domain, _ := reader.ReadString('\n')
+                domain = strings.TrimSpace(domain)
+            
+                fmt.Print("Inserisci il protocollo del sito (http/https): ")
+                protocol, _ := reader.ReadString('\n')
+                protocol = strings.TrimSpace(strings.ToLower(protocol))
+            
+                fmt.Print("Inserisci il SEO Score (numero tra 0 e 100): ")
+                seoScoreStr, _ := reader.ReadString('\n')
+                seoScoreStr = strings.TrimSpace(seoScoreStr)
+                seoScore, _ := strconv.ParseFloat(seoScoreStr, 64)
+            
+                fmt.Print("Il sito ha un banner per i cookie? (y/n): ")
+                cookieBanner, _ := reader.ReadString('\n')
+                cookieBanner = strings.TrimSpace(strings.ToLower(cookieBanner))
+                cookieBannerValue := "missing"
+                if cookieBanner == "y" {
+                    cookieBannerValue = "present"
+                }
+            
+                fmt.Print("Inserisci la tecnologia utilizzata (es: WordPress, Shopify, ecc.): ")
+                technology, _ := reader.ReadString('\n')
+                technology = strings.TrimSpace(technology)
+            
+                // Invio email utilizzando il template "website_review"
+                err = sendCustomEmail(
+                    testEmail,
+                    "Test",
+                    emailConfigPath,
+                    smtpConfig["server"],
+                    smtpConfig["port"],
+                    smtpConfig["user"],
+                    smtpConfig["password"],
+                    true,
+                    protocol,
+                    seoScore,
+                    cookieBannerValue,
+                    "available", // <--- Aggiunto siteStatus
+                    domain,
+                    technology, // Passa la tecnologia
+                )
+            } else {
+                // Invio email utilizzando il template "no_website"
+                err = sendCustomEmail(
+                    testEmail,
+                    "Test",
+                    emailConfigPath,
+                    smtpConfig["server"],
+                    smtpConfig["port"],
+                    smtpConfig["user"],
+                    smtpConfig["password"],
+                    false,
+                    "",    // Nessun protocollo
+                    0,     // Nessun punteggio SEO
+                    "missing",
+                    "no_website",
+                    "",
+                    "", // Nessuna tecnologia
+                )
+            }            
+        
+            if err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio dell'email di test: %v", err))
+            } else {
+                fmt.Println(color.New(color.FgGreen).Sprint("Email di test inviata con successo!"))
+            }   
+        case "8":
 			fmt.Println(color.New(color.FgGreen).Sprint("Uscita dal programma. Arrivederci!"))
-			return      
+			return             
 		default:
 			fmt.Println(color.New(color.FgRed).Sprint("Opzione non valida. Riprova."))
 		}
@@ -986,44 +1140,52 @@ func handleCSVOptions(ctx context.Context, csvFile string) {
     // Recupera la categoria, ad esempio dal nome del file CSV
     category := extractCategoryFromFileName(csvFile) // Estrai la categoria dal nome del file
 
-    fmt.Printf("\nCosa vuoi fare con il file CSV generato (%s)?\n", csvFile)
-    fmt.Println("1. Generare file SQL")
-    fmt.Println("2. Generare file email")
-    fmt.Println("3. Inviare email")
-    fmt.Println("4. Uscire")
-    fmt.Print("Scegli un'opzione (1-4): ")
+    for {
+        fmt.Printf("\nCosa vuoi fare con il file CSV generato (%s)?\n", csvFile)
+        fmt.Println("1. Generare file SQL")
+        fmt.Println("2. Generare file email")
+        fmt.Println("3. Inviare email")
+        fmt.Println("4. Uscire")
+        fmt.Print("Scegli un'opzione (1-4): ")
 
-    reader := bufio.NewReader(os.Stdin)
-    choice, _ := reader.ReadString('\n')
-    choice = strings.TrimSpace(choice)
+        reader := bufio.NewReader(os.Stdin)
+        choice, _ := reader.ReadString('\n')
+        choice = strings.TrimSpace(choice)
 
-    switch choice {
-    case "1":
-        fmt.Println(color.New(color.FgGreen).Sprint("Generazione file SQL..."))
-        if err := generateSQLFromCSV(ctx, csvFile, category); err != nil {
-            fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file SQL: %v", err))
+        select {
+        case <-ctx.Done():
+            fmt.Println("\nInterruzione rilevata. Uscita dalla funzione.")
+            return
+        default:
+            switch choice {
+            case "1":
+                fmt.Println(color.New(color.FgGreen).Sprint("Generazione file SQL..."))
+                if err := generateSQLFromCSV(ctx, csvFile, category); err != nil {
+                    fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file SQL: %v", err))
+                }
+            case "2":
+                fmt.Println(color.New(color.FgGreen).Sprint("Generazione file email..."))
+                if err := generateEmailsToSend(csvFile, category); err != nil {
+                    fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file email: %v", err))
+                }
+            case "3":
+                fmt.Println(color.New(color.FgGreen).Sprint("Invio email in corso..."))
+                smtpConfig := map[string]string{
+                    "server":   "mail.effemmeweb.it",
+                    "port":     "465",
+                    "user":     "info@effemmeweb.it",
+                    "password": "Ludovica2021",
+                }
+                if err := processEmails(ctx, csvFile, "sendmaillog.csv", smtpConfig); err != nil {
+                    fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio delle email: %v", err))
+                }
+            case "4":
+                fmt.Println(color.New(color.FgGreen).Sprint("Uscita. Arrivederci!"))
+                return
+            default:
+                fmt.Println(color.New(color.FgRed).Sprint("Opzione non valida. Riprova."))
+            }
         }
-    case "2":
-        fmt.Println(color.New(color.FgGreen).Sprint("Generazione file email..."))
-        if err := generateEmailsToSend(csvFile, category); err != nil {
-            fmt.Println(color.New(color.FgRed).Sprintf("Errore durante la generazione del file email: %v", err))
-        }
-    case "3":
-        fmt.Println(color.New(color.FgGreen).Sprint("Invio email in corso..."))
-        smtpConfig := map[string]string{
-            "server":   "mail.effemmeweb.it",
-            "port":     "465",
-            "user":     "info@effemmeweb.it",
-            "password": "Ludovica2021",
-        }
-        if err := processEmails(ctx, csvFile, "sendmaillog.csv", smtpConfig); err != nil {
-            fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio delle email: %v", err))
-        }
-    case "4":
-        fmt.Println(color.New(color.FgGreen).Sprint("Uscita. Arrivederci!"))
-        return
-    default:
-        fmt.Println(color.New(color.FgRed).Sprint("Opzione non valida. Riprova."))
     }
 }
 
@@ -1097,21 +1259,23 @@ func generateEmailsToSend(csvFilePath string, category string) error {
         return fmt.Errorf("errore nella lettura dell'intestazione CSV: %v", err)
     }
 
-    emailIndex, nameIndex := -1, -1
+    columnIndexes := make(map[string]int)
+    requiredColumns := []string{
+        "Nome Attività", "Email", "Categoria", "Comune", "Sito Web", "Protocollo",
+        "Tecnologia", "Cookie Banner", "Hosting Provider", "Mobile Performance",
+        "Desktop Performance", "Punteggio SEO", "Disponibilità Sito", "Stato Manutenzione",
+    }
+
     for i, header := range headers {
-        switch strings.ToLower(strings.TrimSpace(header)) {
-        case "email":
-            emailIndex = i
-        case "nome attività":
-            nameIndex = i
+        columnIndexes[strings.TrimSpace(header)] = i
+    }
+
+    for _, col := range requiredColumns {
+        if _, exists := columnIndexes[col]; !exists {
+            return fmt.Errorf("colonna mancante nel file CSV: %s", col)
         }
     }
 
-    if emailIndex == -1 || nameIndex == -1 {
-        return fmt.Errorf("colonne 'email' o 'nome attività' non trovate nel file CSV")
-    }
-
-    // Crea il file CSV di output per le email
     outputFile, err := os.Create(outputEmailFilePath)
     if err != nil {
         return fmt.Errorf("errore nella creazione del file email CSV: %v", err)
@@ -1119,37 +1283,32 @@ func generateEmailsToSend(csvFilePath string, category string) error {
     defer outputFile.Close()
 
     writer := csv.NewWriter(outputFile)
-    writer.UseCRLF = true // Se vuoi terminatori di riga Windows-style
     defer writer.Flush()
 
-    // Scrive l'intestazione
-    writer.Write([]string{"Email", "Nome Attività"})
+    if err := writer.Write(requiredColumns); err != nil {
+        return fmt.Errorf("errore durante la scrittura dell'intestazione: %v", err)
+    }
 
-    // Legge e scrive le righe dal file di input
     for {
         record, err := reader.Read()
         if err == io.EOF {
             break
         }
         if err != nil {
-            return fmt.Errorf("errore nella lettura del file CSV: %v", err)
+            return fmt.Errorf("errore durante la lettura del file CSV: %v", err)
         }
 
-        // Assicurati che ci siano abbastanza colonne
-        if len(record) > emailIndex && len(record) > nameIndex {
-            email := strings.TrimSpace(record[emailIndex])
-            name := strings.TrimSpace(record[nameIndex])
+        row := make([]string, len(requiredColumns))
+        for i, col := range requiredColumns {
+            row[i] = record[columnIndexes[col]]
+        }
 
-            // Scrive una riga nel file CSV di output
-            if email != "" && name != "" {
-                if err := writer.Write([]string{email, name}); err != nil {
-                    return fmt.Errorf("errore durante la scrittura del file email CSV: %v", err)
-                }
-            }
+        if err := writer.Write(row); err != nil {
+            return fmt.Errorf("errore durante la scrittura del record: %v", err)
         }
     }
 
-    fmt.Printf("File delle email generato con successo: %s\n", outputEmailFilePath)
+    fmt.Printf("File email generato con successo: %s\n", outputEmailFilePath)
     return nil
 }
 
@@ -1204,24 +1363,28 @@ func sendEmail(to, subject, body, smtpServer, smtpPort, smtpUser, smtpPassword s
     return client.Quit()
 }
 
-func sendCustomEmail(to, name, emailConfigPath, smtpServer, smtpPort, smtpUser, smtpPassword string, siteExists bool, protocol string, seoScore float64, cookieBanner string) error {
+func sendCustomEmail(to, name, emailConfigPath, smtpServer, smtpPort, smtpUser, smtpPassword string, siteExists bool, protocol string, seoScore float64, cookieBanner, siteStatus, website, technology string) error {
     // Carica la configurazione dei template
     config, err := loadEmailConfig(emailConfigPath)
     if err != nil {
-        return fmt.Errorf("errore nel caricamento della configurazione: %v", err)
+        return fmt.Errorf("Errore nel caricamento della configurazione email: %v", err)
     }
 
-    // Seleziona il template giusto in base ai parametri
-    subject, body, err := getEmailTemplate(config, siteExists, protocol, seoScore, cookieBanner)
+    // Ottieni il template corretto basato sui parametri
+    subject, body, err := getEmailTemplate(config, siteExists, protocol, seoScore, cookieBanner, siteStatus, website, technology)
     if err != nil {
-        return fmt.Errorf("errore nella selezione del template: %v", err)
+        return fmt.Errorf("Errore nella selezione del template: %v", err)
     }
 
-    // Personalizza il corpo dell'email sostituendo il placeholder {name}
+    // Sostituisci ulteriori placeholder
     body = strings.ReplaceAll(body, "{name}", name)
 
-    // Invia l'email
-    return sendEmail(to, subject, body, smtpServer, smtpPort, smtpUser, smtpPassword)
+    // Invia l'email utilizzando le configurazioni SMTP
+    if err := sendEmail(to, subject, body, smtpServer, smtpPort, smtpUser, smtpPassword); err != nil {
+        return fmt.Errorf("Errore durante l'invio dell'email a %s: %v", to, err)
+    }
+
+    return nil
 }
 
 func readSendMailLog(filePath string) (map[string]string, error) {
@@ -1293,14 +1456,12 @@ func sendEmailsFromQueue(ctx context.Context, emailQueue <-chan []string, smtpCo
     ticker := time.NewTicker(time.Second * 3600 / 100) // Rate limit: 100 email/ora
     defer ticker.Stop()
 
-    // Carica la configurazione dei template
     emailConfig, err := loadEmailConfig(emailConfigPath)
     if err != nil {
         fmt.Fprintf(os.Stderr, "Errore durante il caricamento della configurazione email: %v\n", err)
         return
     }
 
-    // Leggi il log delle email già inviate
     log, err := readSendMailLog(logPath)
     if err != nil {
         fmt.Fprintf(os.Stderr, "Errore durante la lettura del log delle email: %v\n", err)
@@ -1316,60 +1477,72 @@ func sendEmailsFromQueue(ctx context.Context, emailQueue <-chan []string, smtpCo
                 return
             }
 
-            email := emailData[0]
-            name := emailData[1]
-            site := emailData[2] // Supponiamo che il sito sia nella colonna 3 (indice 2)
-            cookieBannerColumn := emailData[8] // Supponiamo che la colonna dei cookie sia nella colonna 9 (indice 8)
+            // Dati della riga
+            name := emailData[0]
+            email := emailData[1]
+            website := emailData[4]
+            protocol := emailData[5]
+            technology := emailData[6]
+            cookieBanner := emailData[7]
+            mobilePerf, _ := strconv.ParseFloat(emailData[9], 64)
+            desktopPerf, _ := strconv.ParseFloat(emailData[10], 64)
+            siteAvailable := emailData[12]
+            siteMaintenance := emailData[13]
 
-            fmt.Printf("Elaborazione email: %s - Nome: %s\n", email, name)
-
-            // Verifica se l'email è già presente nel log con stato "Inviata"
-            if status, exists := log[email]; exists && status == "Inviata" {
+            if _, exists := log[email]; exists {
                 fmt.Printf("Email già inviata: %s\n", email)
-                continue // Salta questa email
-            }
-
-            // Determina se il sito esiste
-            siteExists := (site != "")
-
-            // Determina il protocollo
-            var protocol string
-            if strings.HasPrefix(site, "https://") {
-                protocol = "https"
-            } else {
-                protocol = "http"
-            }
-
-            // Imposta il valore del cookie banner
-            cookieBanner := "No"
-            if cookieBannerColumn == "Sì" {
-                cookieBanner = "Yes"
-            }
-
-            // Calcola il punteggio SEO (logica fittizia per esempio)
-            seoScore := 80.0 // Puoi aggiungere logica per calcolare il vero punteggio SEO
-
-            // Seleziona il template giusto in base ai parametri
-            subject, body, err := getEmailTemplate(emailConfig, siteExists, protocol, seoScore, cookieBanner)
-            if err != nil {
-                fmt.Fprintf(os.Stderr, "Errore nella selezione del template: %v\n", err)
                 continue
             }
 
-            // Personalizza il subject e il body usando il template selezionato
-            body = strings.ReplaceAll(body, "{name}", name)
+            var subject, body string
 
-            // Invia l'email
-            err = sendEmail(email, subject, body, smtpConfig["server"], smtpConfig["port"], smtpConfig["user"], smtpConfig["password"])
-            if err != nil {
-                fmt.Fprintf(os.Stderr, "Errore durante l'invio dell'email a %s: %v\n", email, err)
-                updateSendMailLog(logPath, name, email, fmt.Sprintf("Errore: %v", err), subject)
+            if website == "" {
+                subject = emailConfig.Templates["no_website"].Subject
+                body = strings.Join(emailConfig.Templates["no_website"].Body, "\n")
+            } else if siteAvailable == "Non Disponibile" {
+                subject = emailConfig.Templates["website_unavailable"].Subject
+                body = strings.ReplaceAll(strings.Join(emailConfig.Templates["website_unavailable"].Body, "\n"), "{website}", website)
+            } else if siteMaintenance == "In Manutenzione" {
+                subject = emailConfig.Templates["website_under_maintenance"].Subject
+                body = strings.ReplaceAll(strings.Join(emailConfig.Templates["website_under_maintenance"].Body, "\n"), "{website}", website)
             } else {
-                fmt.Printf("Email inviata a %s\n", email)
-                updateSendMailLog(logPath, name, email, "Inviata", subject) // Aggiungi il template usato
+                subject = emailConfig.Templates["website_review"].Subject
+                protocolReview := ""
+                if protocol == "http" {
+                    protocolReview = "<li>Il tuo sito non ha un certificato SSL attivo.</li>"
+                }
+                technologyReview := ""
+                if technology == "WordPress" || technology == "Shopify" || technology == "Prestashop" || technology == "Magento" {
+                    technologyReview = fmt.Sprintf("<li>Il tuo sito utilizza %s. Possiamo supportarti con questa piattaforma.</li>", technology)
+                }
+                cookieReview := ""
+                if cookieBanner == "No" {
+                    cookieReview = "<li>Non abbiamo trovato un banner per i cookie. Ti consigliamo di aggiungerlo per rispettare le normative sulla privacy.</li>"
+                }
+                perfReview := ""
+                avgPerf := (mobilePerf + desktopPerf) / 2
+                if avgPerf < 70 {
+                    perfReview = "<li>La media delle performance è inferiore a 70. Consigliamo un'ottimizzazione.</li>"
+                }
+                body = strings.ReplaceAll(strings.Join(emailConfig.Templates["website_review"].Body, "\n"), "{website}", website)
+                body = strings.ReplaceAll(body, "{protocol_review}", protocolReview)
+                body = strings.ReplaceAll(body, "{technology_review}", technologyReview)
+                body = strings.ReplaceAll(body, "{cookie_review}", cookieReview)
+                body = strings.ReplaceAll(body, "{performance_review}", perfReview)
             }
 
-            <-ticker.C // Rispetta il rate limit
+            body = strings.ReplaceAll(body, "{name}", name)
+
+            err := sendEmail(email, subject, body, smtpConfig["server"], smtpConfig["port"], smtpConfig["user"], smtpConfig["password"])
+            if err != nil {
+                fmt.Fprintf(os.Stderr, "Errore durante l'invio dell'email a %s: %v\n", email, err)
+                updateSendMailLog(logPath, name, email, "Errore", subject)
+            } else {
+                fmt.Printf("Email inviata a %s\n", email)
+                updateSendMailLog(logPath, name, email, "Inviata", subject)
+            }
+
+            <-ticker.C
         }
     }
 }

@@ -13,7 +13,9 @@
     "Contiki CMS": ["contiki", "contiki-cms"],
     "Redaxo": ["redaxo", "/redaxo"],
     "Mambo": ["mambo-server", "mambo.org"],
-    "Shopify": ["cdn.shopify.com", "Shopify", "shopify_assets"],
+    "Shopify": ["cdn.shopify.com", "Shopify", "shopify_assets", "_shopify"],
+    "Ecwid": ["cdn.ecwid.com", "app.ecwid.com"],
+    "Axelero": ["axeleroweb.it"],
     "Wix": ["wix.com", "wix_", "wixapps.com"],
     "Squarespace": ["squarespace", "squarespace-assets"],
     "Webnode": ["webnode", "Webnode.com"],
@@ -56,5 +58,6 @@
     "iol-analytics.min.js",
     "iol-body.np.js",
     "iol-body.js"
-    ]
+    ],
+    "Medusa.js": ["medusajs","@medusajs/medusa"]
 }
