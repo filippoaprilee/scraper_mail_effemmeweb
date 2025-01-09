@@ -1378,6 +1378,7 @@ func sendCustomEmail(to, name, emailConfigPath, smtpServer, smtpPort, smtpUser, 
 
     // Sostituisci ulteriori placeholder
     body = strings.ReplaceAll(body, "{name}", name)
+    body = strings.ReplaceAll(body, "{email}", to) // Aggiunta sostituzione di {email}
 
     // Invia l'email utilizzando le configurazioni SMTP
     if err := sendEmail(to, subject, body, smtpServer, smtpPort, smtpUser, smtpPassword); err != nil {
