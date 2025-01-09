@@ -12,13 +12,16 @@ import (
 	"net/smtp"
 	"os"
 	"os/exec"
+    "regexp"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+    "net/url"
     "sort"
+    "github.com/PuerkitoBio/goquery"
 	"syscall"
 	"time"
 
@@ -26,7 +29,11 @@ import (
 	"github.com/gosom/google-maps-scraper/gmaps"
 	"github.com/gosom/scrapemate"
 	"github.com/gosom/scrapemate/scrapemateapp"
+    "github.com/chromedp/chromedp"
+
 )
+
+type urlValues map[string]string
 
 type EmailConfig struct {
     Templates map[string]struct {
@@ -35,6 +42,180 @@ type EmailConfig struct {
     } `json:"templates"`
 }
 
+// Metodo Encode per urlValues
+func (u urlValues) Encode() string {
+    var buf strings.Builder
+    for key, value := range u {
+        if buf.Len() > 0 {
+            buf.WriteByte('&')
+        }
+        buf.WriteString(url.QueryEscape(key))
+        buf.WriteByte('=')
+        buf.WriteString(url.QueryEscape(value))
+    }
+    return buf.String()
+}
+
+// extractEmailsFromHTML estrae le email direttamente dal div contenente il contenuto.
+// extractEmailsFromHTML estrae le email dal contenuto HTML analizzato
+func extractEmailsFromHTML(htmlContent string) ([]string, error) {
+	// Crea un documento goquery dal contenuto HTML
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+	if err != nil {
+		return nil, fmt.Errorf("errore nella creazione del documento goquery: %v", err)
+	}
+
+	// Trova l'elemento che contiene le email (ad esempio div.post-content)
+	var emails []string
+	doc.Find("div.post-content").Each(func(i int, s *goquery.Selection) {
+		text := s.Text()
+		// Dividi il testo in linee per individuare le email
+		lines := strings.Split(text, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			// Usa una regex per verificare se la linea contiene un'email
+			if isEmail(line) {
+				emails = append(emails, line)
+			}
+		}
+	})
+
+	return emails, nil
+}
+
+// isEmail verifica se una stringa è un'email valida
+func isEmail(s string) bool {
+	re := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+	return re.MatchString(s)
+}
+
+// readExistingEmails legge le email esistenti dal file CSV e le restituisce in un set.
+func readExistingEmails(csvFilePath string) (map[string]struct{}, error) {
+	existingEmails := make(map[string]struct{})
+
+	file, err := os.Open(csvFilePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return existingEmails, nil // File non esiste ancora
+		}
+		return nil, fmt.Errorf("errore nell'apertura del file CSV esistente: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("errore nella lettura del file CSV esistente: %v", err)
+		}
+
+		if len(record) > 0 {
+			email := strings.TrimSpace(record[0])
+			existingEmails[email] = struct{}{}
+		}
+	}
+
+	return existingEmails, nil
+}
+
+// appendEmailsToCSV aggiunge nuove email al file CSV esistente.
+func appendEmailsToCSV(csvFilePath string, emails []string) error {
+	if len(emails) == 0 {
+		// Se non ci sono email, scrivi un messaggio di default
+		return os.WriteFile(csvFilePath, []byte("Nessuna email disiscritta trovata."), 0644)
+	}
+
+	// Rimuovi duplicati
+	uniqueEmails := make(map[string]struct{})
+	for _, email := range emails {
+		uniqueEmails[email] = struct{}{}
+	}
+
+	// Trasforma le email in una lista e ordinale
+	var emailList []string
+	for email := range uniqueEmails {
+		emailList = append(emailList, email)
+	}
+	sort.Strings(emailList)
+
+	// Scrivi le email nel file CSV in un'unica riga separata da virgole
+	csvContent := strings.Join(emailList, ",")
+	return os.WriteFile(csvFilePath, []byte(csvContent), 0644)
+}
+
+func fetchPageContentWithChromedp(pageURL string) (string, error) {
+	// Crea un nuovo contesto per Chrome in modalità incognito
+	ctx, cancel := chromedp.NewExecAllocator(context.Background(),
+		append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.Flag("headless", true),       // Usa Chrome in modalità headless
+			chromedp.Flag("disable-extensions", true),
+			chromedp.Flag("incognito", true),      // Forza la modalità incognito
+			chromedp.Flag("disable-cache", true),  // Disabilita la cache
+		)...,
+	)
+	defer cancel()
+
+	// Crea il contesto browser
+	ctx, cancel = chromedp.NewContext(ctx)
+	defer cancel()
+
+	// Crea una variabile per contenere il contenuto della pagina
+	var htmlContent string
+
+	// Naviga verso la pagina e recupera il contenuto HTML
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(pageURL),
+		chromedp.OuterHTML("html", &htmlContent),
+	)
+	if err != nil {
+		return "", fmt.Errorf("errore durante la navigazione con Chrome: %v", err)
+	}
+
+	return htmlContent, nil
+}
+// resetCSV elimina il file CSV se esiste
+func resetCSV(csvFilePath string) error {
+	err := os.Remove(csvFilePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("errore durante la rimozione del CSV: %v", err)
+	}
+	return nil
+}
+
+// updateUnsubscribeList aggiorna la lista delle email disiscritte.
+func updateUnsubscribeList() error {
+	pageURL := "https://effemmeweb.it/unsubscribe_list/"
+	csvFilePath := "unsubscribe_list_api.csv"
+
+	fmt.Println("🔄 Aggiornamento della lista delle email disiscritte...")
+
+	// Recupera il contenuto della pagina usando Chromedp
+	htmlContent, err := fetchPageContentWithChromedp(pageURL)
+	if err != nil {
+		return fmt.Errorf("errore durante il fetch: %v", err)
+	}
+
+	// Debug: stampa il contenuto HTML
+	fmt.Println("HTML recuperato:")
+	fmt.Println(htmlContent)
+
+	// Estrai le email dal contenuto HTML
+	emails, err := extractEmailsFromHTML(htmlContent)
+	if err != nil {
+		return fmt.Errorf("errore nell'estrazione delle email: %v", err)
+	}
+
+	// Sovrascrivi il CSV con le nuove email
+	if err := appendEmailsToCSV(csvFilePath, emails); err != nil {
+		return fmt.Errorf("errore nell'aggiornamento del CSV: %v", err)
+	}
+
+	fmt.Printf("✅ CSV aggiornato con %d email.\n", len(emails))
+	return nil
+}
 
 // Funzione per cancellare il terminale
 func clearTerminal() {
@@ -183,7 +364,7 @@ func getEmailTemplate(config EmailConfig, siteExists bool, protocol string, seoS
     body = strings.ReplaceAll(body, "{website}", website)
     body = strings.ReplaceAll(body, "{protocol_review}", func() string {
         if protocol == "http" {
-            return "Il tuo sito non utilizza un protocollo sicuro (HTTPS)."
+            return "Il tuo sito NON utilizza un protocollo sicuro (HTTPS)."
         }
         return "Il tuo sito utilizza un protocollo sicuro (HTTPS)."
     }())
@@ -197,7 +378,7 @@ func getEmailTemplate(config EmailConfig, siteExists bool, protocol string, seoS
         if cookieBanner == "present" {
             return "Il sito ha un banner per i cookie."
         }
-        return "Il sito non ha un banner per i cookie."
+        return "Il sito NON ha un banner per i cookie."
     }())
     body = strings.ReplaceAll(body, "{performance_review}", func() string {
         if seoScore < 70 {
@@ -345,6 +526,27 @@ func main() {
 
 	printUsage()
 
+    // Aggiorna la lista delle email disiscritte
+	if err := updateUnsubscribeList(); err != nil {
+		fmt.Println("❌ Errore:", err)
+	} else {
+		fmt.Println("✅ Operazione completata con successo.")
+	}
+
+	// Debug: stampa il contenuto del CSV
+	file, err := os.Open("unsubscribe_list_api.csv")
+	if err != nil {
+		fmt.Println("❌ Errore nella lettura del CSV:", err)
+		return
+	}
+	defer file.Close()
+
+	fmt.Println("Contenuto del CSV aggiornato:")
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fmt.Println(scanner.Text())
+	}
+
 	// Variabile per sapere se un file CSV è stato generato
 	var generatedCSV string
 
@@ -462,7 +664,7 @@ func main() {
                 fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio delle email: %v", err))
             } else {
                 fmt.Println(color.New(color.FgGreen).Sprint("Email inviate con successo."))
-            }
+            }        
         
 		case "5":
 			fmt.Println("Pulizia degli URL nei file CSV in corso...")
@@ -1285,6 +1487,7 @@ func generateEmailsToSend(csvFilePath string, category string) error {
     writer := csv.NewWriter(outputFile)
     defer writer.Flush()
 
+    // Scrivi l'intestazione nel file di output
     if err := writer.Write(requiredColumns); err != nil {
         return fmt.Errorf("errore durante la scrittura dell'intestazione: %v", err)
     }
@@ -1298,6 +1501,21 @@ func generateEmailsToSend(csvFilePath string, category string) error {
             return fmt.Errorf("errore durante la lettura del file CSV: %v", err)
         }
 
+        // Estrai l'indice della colonna "Email"
+        emailIndex := columnIndexes["Email"]
+        email := strings.TrimSpace(record[emailIndex])
+
+        // Verifica che l'email non sia vuota e abbia un formato valido
+        if email == "" {
+            continue // Salta la riga se l'email è vuota
+        }
+
+        if !isValidEmail(email) {
+            fmt.Printf("⚠️  Email non valida trovata: %s. Riga ignorata.\n", email)
+            continue // Salta la riga se l'email non è valida
+        }
+
+        // Prepara la riga da scrivere
         row := make([]string, len(requiredColumns))
         for i, col := range requiredColumns {
             row[i] = record[columnIndexes[col]]
@@ -1310,6 +1528,11 @@ func generateEmailsToSend(csvFilePath string, category string) error {
 
     fmt.Printf("File email generato con successo: %s\n", outputEmailFilePath)
     return nil
+}
+
+func isValidEmail(email string) bool {
+    re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+    return re.MatchString(email)
 }
 
 func sendEmail(to, subject, body, smtpServer, smtpPort, smtpUser, smtpPassword string) error {
@@ -1454,9 +1677,6 @@ func updateSendMailLog(filePath, name, email, status, template string) error {
 func sendEmailsFromQueue(ctx context.Context, emailQueue <-chan []string, smtpConfig map[string]string, logPath string, emailConfigPath string, wg *sync.WaitGroup) {
     defer wg.Done()
 
-    ticker := time.NewTicker(time.Second * 3600 / 100) // Rate limit: 100 email/ora
-    defer ticker.Stop()
-
     emailConfig, err := loadEmailConfig(emailConfigPath)
     if err != nil {
         fmt.Fprintf(os.Stderr, "Errore durante il caricamento della configurazione email: %v\n", err)
@@ -1490,6 +1710,12 @@ func sendEmailsFromQueue(ctx context.Context, emailQueue <-chan []string, smtpCo
             siteAvailable := emailData[12]
             siteMaintenance := emailData[13]
 
+            // Escludi le email che contengono "@pec."
+            if strings.Contains(strings.ToLower(email), "@pec.") {
+                fmt.Printf("⚠️  Email con '@pec.' trovata: %s. Riga ignorata.\n", email)
+                continue
+            }
+
             if _, exists := log[email]; exists {
                 fmt.Printf("Email già inviata: %s\n", email)
                 continue
@@ -1508,23 +1734,48 @@ func sendEmailsFromQueue(ctx context.Context, emailQueue <-chan []string, smtpCo
                 body = strings.ReplaceAll(strings.Join(emailConfig.Templates["website_under_maintenance"].Body, "\n"), "{website}", website)
             } else {
                 subject = emailConfig.Templates["website_review"].Subject
-                protocolReview := ""
+
+                // Gestione del Protocollo
+                var protocolReview string
                 if protocol == "http" {
-                    protocolReview = "<li>Il tuo sito non ha un certificato SSL attivo.</li>"
+                    protocolReview = "Il tuo sito non ha un certificato SSL attivo."
+                } else if protocol == "https" {
+                    protocolReview = "Il tuo sito utilizza un protocollo sicuro (HTTPS)."
+                } else {
+                    protocolReview = "Il tuo sito utilizza un protocollo sconosciuto."
                 }
-                technologyReview := ""
-                if technology == "WordPress" || technology == "Shopify" || technology == "Prestashop" || technology == "Magento" {
-                    technologyReview = fmt.Sprintf("<li>Il tuo sito utilizza %s. Possiamo supportarti con questa piattaforma.</li>", technology)
+
+                // Gestione della Tecnologia
+                var technologyReview string
+                switch technology {
+                case "WordPress", "Shopify", "Prestashop", "Magento":
+                    technologyReview = fmt.Sprintf("Il tuo sito utilizza %s. Possiamo supportarti con questa piattaforma.", technology)
+                case "":
+                    technologyReview = "La tecnologia utilizzata dal tuo sito non è stata identificata."
+                default:
+                    technologyReview = fmt.Sprintf("Il tuo sito utilizza %s.", technology)
                 }
-                cookieReview := ""
-                if cookieBanner == "No" {
-                    cookieReview = "<li>Non abbiamo trovato un banner per i cookie. Ti consigliamo di aggiungerlo per rispettare le normative sulla privacy.</li>"
+
+                // Gestione del Cookie Banner
+                var cookieReview string
+                if cookieBanner == "Sì" {
+                    cookieReview = "Abbiamo trovato il banner per i cookie."
+                } else if cookieBanner == "No" {
+                    cookieReview = "Non abbiamo trovato un banner per i cookie. Ti consigliamo di aggiungerlo per rispettare le normative sulla privacy."
+                } else {
+                    cookieReview = "La presenza del banner per i cookie non è stata determinata."
                 }
-                perfReview := ""
+
+                // Gestione delle Performance
+                var perfReview string
                 avgPerf := (mobilePerf + desktopPerf) / 2
                 if avgPerf < 70 {
-                    perfReview = "<li>La media delle performance è inferiore a 70. Consigliamo un'ottimizzazione.</li>"
+                    perfReview = "La media delle performance è inferiore a 70. Consigliamo un'ottimizzazione."
+                } else {
+                    perfReview = "Le performance del tuo sito sono buone."
                 }
+
+                // Sostituzione dei placeholder nel corpo dell'email
                 body = strings.ReplaceAll(strings.Join(emailConfig.Templates["website_review"].Body, "\n"), "{website}", website)
                 body = strings.ReplaceAll(body, "{protocol_review}", protocolReview)
                 body = strings.ReplaceAll(body, "{technology_review}", technologyReview)
@@ -1532,8 +1783,11 @@ func sendEmailsFromQueue(ctx context.Context, emailQueue <-chan []string, smtpCo
                 body = strings.ReplaceAll(body, "{performance_review}", perfReview)
             }
 
+            // Sostituisci {name} e {email} nei placeholder
             body = strings.ReplaceAll(body, "{name}", name)
+            body = strings.ReplaceAll(body, "{email}", email) // Aggiunta sostituzione di {email}
 
+            // Invia l'email
             err := sendEmail(email, subject, body, smtpConfig["server"], smtpConfig["port"], smtpConfig["user"], smtpConfig["password"])
             if err != nil {
                 fmt.Fprintf(os.Stderr, "Errore durante l'invio dell'email a %s: %v\n", email, err)
@@ -1542,16 +1796,41 @@ func sendEmailsFromQueue(ctx context.Context, emailQueue <-chan []string, smtpCo
                 fmt.Printf("Email inviata a %s\n", email)
                 updateSendMailLog(logPath, name, email, "Inviata", subject)
             }
-
-            <-ticker.C
         }
     }
+}
+
+func readUnsubscribedEmails(filePath string) (map[string]struct{}, error) {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return nil, fmt.Errorf("errore durante l'apertura del file di disiscrizione: %v", err)
+    }
+    defer file.Close()
+
+    content, err := ioutil.ReadAll(file)
+    if err != nil {
+        return nil, fmt.Errorf("errore durante la lettura del file di disiscrizione: %v", err)
+    }
+
+    emails := strings.Fields(string(content)) // Divide il contenuto in base agli spazi
+    unsubscribed := make(map[string]struct{}, len(emails))
+    for _, email := range emails {
+        unsubscribed[strings.TrimSpace(email)] = struct{}{}
+    }
+
+    return unsubscribed, nil
 }
 
 func processEmails(ctx context.Context, emailCSV, logPath string, smtpConfig map[string]string) error {
     startTime := time.Now()  // Inizia a tracciare il tempo
     fmt.Println("Inizio processo di invio email...")
-    
+
+    // Leggi le email di disiscrizione
+    unsubscribedEmails, err := readUnsubscribedEmails("unsubscribe_list_api.csv")
+    if err != nil {
+        return fmt.Errorf("errore durante la lettura delle email disiscritte: %v", err)
+    }
+
     file, err := os.Open(emailCSV)
     if err != nil {
         return fmt.Errorf("impossibile aprire il file delle email: %v", err)
@@ -1564,17 +1843,7 @@ func processEmails(ctx context.Context, emailCSV, logPath string, smtpConfig map
         return fmt.Errorf("errore durante la lettura dell'intestazione del file delle email: %v", err)
     }
 
-    emailQueue := make(chan []string, 100)
-    wg := &sync.WaitGroup{}
-
-    // Lancia più worker per inviare le email
-    numWorkers := 5
-    for i := 0; i < numWorkers; i++ {
-        wg.Add(1)
-        go sendEmailsFromQueue(ctx, emailQueue, smtpConfig, logPath, "email_config.json", wg)
-    }
-
-    // Leggi le email dal CSV e mettile in coda
+    var allEmails [][]string
     for {
         record, err := reader.Read()
         if err == io.EOF {
@@ -1583,11 +1852,73 @@ func processEmails(ctx context.Context, emailCSV, logPath string, smtpConfig map
         if err != nil || len(record) < 2 {
             continue
         }
-        emailQueue <- record
+
+        email := strings.TrimSpace(record[1])
+        if _, unsubscribed := unsubscribedEmails[email]; unsubscribed {
+            fmt.Printf("⚠️  Email nella lista di disiscrizione: %s. Riga ignorata.\n", email)
+            continue
+        }
+
+        allEmails = append(allEmails, record)
+    }
+    
+    // Filtra le email con "@pec."
+    var filteredEmails [][]string
+    for _, record := range allEmails {
+        email := strings.TrimSpace(record[1])
+        if strings.Contains(strings.ToLower(email), "@pec.") {
+            fmt.Printf("⚠️  Email con '@pec.' trovata: %s. Riga ignorata.\n", email)
+            continue
+        }
+        filteredEmails = append(filteredEmails, record)
     }
 
-    close(emailQueue)
-    wg.Wait()
+    // Dividi le email in batch di 100
+    batchSize := 100
+    totalEmails := len(filteredEmails)
+    totalBatches := (totalEmails + batchSize - 1) / batchSize
+
+    for batch := 0; batch < totalBatches; batch++ {
+        start := batch * batchSize
+        end := start + batchSize
+        if end > totalEmails {
+            end = totalEmails
+        }
+        currentBatch := filteredEmails[start:end]
+
+        fmt.Printf("Invio della batch %d/%d di %d email...\n", batch+1, totalBatches, len(currentBatch))
+
+        emailQueue := make(chan []string, len(currentBatch))
+        wg := &sync.WaitGroup{}
+
+        // Avvia i worker
+        numWorkers := 5
+        for i := 0; i < numWorkers; i++ {
+            wg.Add(1)
+            go sendEmailsFromQueue(ctx, emailQueue, smtpConfig, logPath, "email_config.json", wg)
+        }
+
+        // Metti le email nella coda
+        for _, emailData := range currentBatch {
+            emailQueue <- emailData
+        }
+
+        close(emailQueue)
+        wg.Wait()
+
+        fmt.Printf("✅ Batch %d inviata con successo.\n", batch+1)
+
+        if batch < totalBatches-1 {
+            fmt.Println("⏳ Blocco invio email per 60 minuti...")
+            select {
+            case <-ctx.Done():
+                fmt.Println("Interruzione rilevata durante il blocco.")
+                return nil
+            case <-time.After(60 * time.Minute):
+                // Dopo 60 minuti, procedi con il prossimo batch
+            }
+        }
+    }
 
     // Calcola il tempo trascorso in minuti
     elapsedTime := time.Since(startTime).Minutes()
