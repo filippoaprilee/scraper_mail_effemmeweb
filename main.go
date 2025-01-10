@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+    "math/rand"
 	"io/ioutil"
 	"net/smtp"
 	"os"
@@ -198,9 +199,6 @@ func updateUnsubscribeList() error {
 		return fmt.Errorf("errore durante il fetch: %v", err)
 	}
 
-	// Debug: stampa il contenuto HTML
-	fmt.Println("HTML recuperato:")
-	fmt.Println(htmlContent)
 
 	// Estrai le email dal contenuto HTML
 	emails, err := extractEmailsFromHTML(htmlContent)
@@ -1861,7 +1859,7 @@ func processEmails(ctx context.Context, emailCSV, logPath string, smtpConfig map
 
         allEmails = append(allEmails, record)
     }
-    
+
     // Filtra le email con "@pec."
     var filteredEmails [][]string
     for _, record := range allEmails {
@@ -1873,49 +1871,67 @@ func processEmails(ctx context.Context, emailCSV, logPath string, smtpConfig map
         filteredEmails = append(filteredEmails, record)
     }
 
-    // Dividi le email in batch di 100
-    batchSize := 100
-    totalEmails := len(filteredEmails)
-    totalBatches := (totalEmails + batchSize - 1) / batchSize
+    // Imposta il contatore per il numero massimo di email giornaliere
+    emailCount := 0
+    maxEmailsPerDay := 600
 
-    for batch := 0; batch < totalBatches; batch++ {
-        start := batch * batchSize
-        end := start + batchSize
-        if end > totalEmails {
-            end = totalEmails
+    for _, emailData := range filteredEmails {
+        select {
+        case <-ctx.Done():
+            fmt.Println("Processo interrotto.")
+            return nil
+        default:
         }
-        currentBatch := filteredEmails[start:end]
 
-        fmt.Printf("Invio della batch %d/%d di %d email...\n", batch+1, totalBatches, len(currentBatch))
+        // Controlla se è fuori dall'orario consentito (9-18 orario italiano)
+        now := time.Now().In(time.FixedZone("CET", 1*60*60)) // Orario italiano
+        if now.Hour() < 9 || now.Hour() >= 18 {
+            fmt.Println("⏳ Fuori dall'orario di invio (9-18). Aspetto fino al prossimo orario consentito...")
+            for {
+                time.Sleep(10 * time.Minute) // Aspetta 10 minuti
+                now = time.Now().In(time.FixedZone("CET", 1*60*60))
+                if now.Hour() >= 9 && now.Hour() < 18 {
+                    break
+                }
+            }
+        }
 
-        emailQueue := make(chan []string, len(currentBatch))
+        // Verifica se si è raggiunto il limite massimo giornaliero
+        if emailCount >= maxEmailsPerDay {
+            fmt.Println("⏳ Raggiunto il limite massimo giornaliero di email (600). Termino il processo per oggi.")
+            break
+        }
+
+        // Invio dell'email
         wg := &sync.WaitGroup{}
-
-        // Avvia i worker
-        numWorkers := 5
-        for i := 0; i < numWorkers; i++ {
-            wg.Add(1)
-            go sendEmailsFromQueue(ctx, emailQueue, smtpConfig, logPath, "email_config.json", wg)
-        }
-
-        // Metti le email nella coda
-        for _, emailData := range currentBatch {
-            emailQueue <- emailData
-        }
-
+        emailQueue := make(chan []string, 1)
+        emailQueue <- emailData
         close(emailQueue)
+        wg.Add(1)
+        go sendEmailsFromQueue(ctx, emailQueue, smtpConfig, logPath, "email_config.json", wg)
         wg.Wait()
 
-        fmt.Printf("✅ Batch %d inviata con successo.\n", batch+1)
+        emailCount++
+        fmt.Printf("✅ Email %d inviata con successo.\n", emailCount)
 
-        if batch < totalBatches-1 {
-            fmt.Println("⏳ Blocco invio email per 60 minuti...")
+        // Attendi un ritardo casuale tra 30 secondi e 1 minuto
+        delay := time.Duration(30+rand.New(rand.NewSource(time.Now().UnixNano())).Intn(31)) * time.Second
+        fmt.Printf("⏳ Attesa di %s prima del prossimo invio...\n", delay)
+        select {
+        case <-ctx.Done():
+            fmt.Println("Processo interrotto durante l'attesa.")
+            return nil
+        case <-time.After(delay):
+        }
+
+        // Dopo 100 email, pausa per 60 minuti
+        if emailCount%100 == 0 {
+            fmt.Println("⏳ Pausa di 60 minuti dopo 100 email inviate...")
             select {
             case <-ctx.Done():
-                fmt.Println("Interruzione rilevata durante il blocco.")
+                fmt.Println("Processo interrotto durante la pausa.")
                 return nil
             case <-time.After(60 * time.Minute):
-                // Dopo 60 minuti, procedi con il prossimo batch
             }
         }
     }
