@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 
 # URL di esempio: pagina Wikipedia che elenca i comuni della Lombardia
-url = "https://it.wikipedia.org/wiki/Comuni_della_Lombardia"  # Controlla che l'URL sia corretto
+url = "https://it.wikipedia.org/wiki/Comuni_del_Lazio"  # Controlla che l'URL sia corretto
 
 response = requests.get(url)
 response.raise_for_status()  # Controlla eventuali errori
