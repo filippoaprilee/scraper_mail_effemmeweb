@@ -57,7 +57,6 @@ func (u urlValues) Encode() string {
     return buf.String()
 }
 
-// extractEmailsFromHTML estrae le email direttamente dal div contenente il contenuto.
 // extractEmailsFromHTML estrae le email dal contenuto HTML analizzato
 func extractEmailsFromHTML(htmlContent string) ([]string, error) {
 	// Crea un documento goquery dal contenuto HTML
@@ -166,8 +165,15 @@ func fetchPageContentWithChromedp(pageURL string) (string, error) {
 	// Crea una variabile per contenere il contenuto della pagina
 	var htmlContent string
 
-	// Naviga verso la pagina e recupera il contenuto HTML
+	// Esegui la navigazione su admin-ajax.php per effettuare il purge della cache
+	purgeURL := "https://effemmeweb.it/wp-admin/admin-ajax.php?action=admin_bar_purge_cache&_wpnonce=309d1c5390"
+
 	err := chromedp.Run(ctx,
+		chromedp.Navigate(purgeURL),
+		// Eventualmente attendi un minimo prima di proseguire
+		chromedp.Sleep(2*time.Second),
+
+		// Ora naviga verso la pagina desiderata
 		chromedp.Navigate(pageURL),
 		chromedp.OuterHTML("html", &htmlContent),
 	)
@@ -177,6 +183,7 @@ func fetchPageContentWithChromedp(pageURL string) (string, error) {
 
 	return htmlContent, nil
 }
+
 // resetCSV elimina il file CSV se esiste
 func resetCSV(csvFilePath string) error {
 	err := os.Remove(csvFilePath)
