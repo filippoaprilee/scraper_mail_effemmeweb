@@ -123,10 +123,7 @@ func readExistingEmails(csvFilePath string) (map[string]struct{}, error) {
 
 // appendEmailsToCSV aggiunge nuove email al file CSV esistente.
 func appendEmailsToCSV(csvFilePath string, emails []string) error {
-	if len(emails) == 0 {
-		// Se non ci sono email, scrivi un messaggio di default
-		return os.WriteFile(csvFilePath, []byte("Nessuna email disiscritta trovata."), 0644)
-	}
+
 
 	// Rimuovi duplicati
 	uniqueEmails := make(map[string]struct{})
