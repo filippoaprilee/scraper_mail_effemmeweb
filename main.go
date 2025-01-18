@@ -307,7 +307,8 @@ func printUsage() {
     fmt.Printf("   ➤ %s: Pulisce gli URL nei file CSV per eliminare parametri non necessari.\n", highlight("5. Pulizia URL"))
     fmt.Printf("   ➤ %s: Filtra un CSV in base a categorie specifiche.\n", highlight("6. Filtra CSV"))
     fmt.Printf("   ➤ %s: Invia una email di prova per verificare il sistema di invio email.\n", highlight("7. Email di Test"))
-    fmt.Printf("   ➤ %s: Esci dall'applicazione.\n", highlight("8. Esci"))
+    fmt.Printf("   ➤ %s: Unisce file CSV dalla directory in un unico file.\n", highlight("8. Unisci CSV"))
+    fmt.Printf("   ➤ %s: Esci dall'applicazione.\n", highlight("9. Esci"))
 
     fmt.Println(section("🔔 NOTE IMPORTANTI:"))
     fmt.Printf("   - %s\n", important("Puoi interrompere l'esecuzione in sicurezza usando CTRL+C."))
@@ -390,6 +391,122 @@ func getEmailTemplate(config EmailConfig, siteExists bool, protocol string, seoS
     }())
 
     return subject, body, nil
+}
+
+func mergeCSVFiles() error {
+    // Directory dei file CSV
+    csvDir := filepath.Join("scraper_results", "csv_results")
+
+    // Trova tutti i file CSV nella directory
+    files, err := filepath.Glob(filepath.Join(csvDir, "*.csv"))
+    if err != nil || len(files) == 0 {
+        return fmt.Errorf("nessun file CSV trovato nella directory %s", csvDir)
+    }
+
+    fmt.Println("\n📂 File disponibili:")
+    for i, file := range files {
+        fmt.Printf("%d. %s\n", i+1, file)
+    }
+
+    fmt.Print("\nSeleziona i file CSV da unire, separandoli con una virgola (es. 1,2,3): ")
+    var input string
+    fmt.Scanln(&input)
+
+    // Parsing dell'input
+    selectedIndexes := strings.Split(input, ",")
+    selectedFiles := make([]string, 0, len(selectedIndexes))
+    for _, indexStr := range selectedIndexes {
+        index, err := strconv.Atoi(strings.TrimSpace(indexStr))
+        if err != nil || index < 1 || index > len(files) {
+            fmt.Printf("⚠️ Indice non valido: %s\n", indexStr)
+            continue
+        }
+        selectedFiles = append(selectedFiles, files[index-1])
+    }
+
+    if len(selectedFiles) == 0 {
+        return fmt.Errorf("nessun file selezionato")
+    }
+
+    // Mappa per tenere traccia dei duplicati
+    uniqueEntries := make(map[string]struct{})
+
+    // Nome del file di output
+    outputFilePath := filepath.Join(csvDir, "FINISHER_OUTPUT.CSV")
+
+    // Creazione del file di output
+    outputFile, err := os.Create(outputFilePath)
+    if err != nil {
+        return fmt.Errorf("errore nella creazione del file di output: %v", err)
+    }
+    defer outputFile.Close()
+
+    writer := csv.NewWriter(outputFile)
+    defer writer.Flush()
+
+    // Intestazione del CSV
+    header := []string{
+        "Nome Attività", "Categoria", "Sito Web", "Telefono", "Indirizzo", "Comune", "Provincia", "Email",
+        "Protocollo", "Tecnologia", "Cookie Banner", "Hosting Provider", "Mobile Performance",
+        "Desktop Performance", "Punteggio SEO", "Disponibilità Sito", "Stato Manutenzione",
+    }
+    if err := writer.Write(header); err != nil {
+        return fmt.Errorf("errore durante la scrittura dell'intestazione: %v", err)
+    }
+
+    // Elaborazione dei file selezionati
+    for _, filePath := range selectedFiles {
+        fmt.Printf("\nUnione del file: %s\n", filePath)
+
+        inputFile, err := os.Open(filePath)
+        if err != nil {
+            fmt.Printf("❌ Errore nell'apertura del file %s: %v\n", filePath, err)
+            continue
+        }
+        defer inputFile.Close()
+
+        reader := csv.NewReader(inputFile)
+
+        // Salta l'intestazione del file
+        _, err = reader.Read()
+        if err != nil {
+            fmt.Printf("❌ Errore nella lettura dell'intestazione del file %s: %v\n", filePath, err)
+            continue
+        }
+
+        // Leggi e processa le righe
+        for {
+            record, err := reader.Read()
+            if err == io.EOF {
+                break
+            }
+            if err != nil {
+                fmt.Printf("⚠️ Riga saltata a causa di un errore: %v\n", err)
+                continue
+            }
+
+            if len(record) != len(header) {
+                fmt.Printf("⚠️ Riga non valida: %v\n", record)
+                continue
+            }
+
+            // Chiave univoca basata su Nome Attività, Email e Telefono
+            key := strings.ToLower(record[0] + record[7] + record[3])
+            if _, exists := uniqueEntries[key]; exists {
+                fmt.Printf("🔁 Duplicato trovato: %s\n", record[0])
+                continue
+            }
+
+            uniqueEntries[key] = struct{}{}
+
+            if err := writer.Write(record); err != nil {
+                fmt.Printf("❌ Errore durante la scrittura del record: %v\n", err)
+            }
+        }
+    }
+
+    fmt.Printf("\n✅ File unito creato con successo: %s\n", outputFilePath)
+    return nil
 }
 
 func filterCSV(inputFile string, outputFile string) error {
@@ -599,8 +716,9 @@ func main() {
 		fmt.Println("5. 🧹 Pulisci URL dei siti web.")
 		fmt.Println("6. 🔄 Filtra un CSV per categorie specifiche.")
         fmt.Println("7. 📧 Invia una email di prova per verificare il sistema di invio email.")
-        fmt.Println("8. ❌ Esci dall'applicazione.")
-		fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-8): "))
+        fmt.Println("8. 📂 Unisci file CSV dalla directory in un unico file.")
+        fmt.Println("9. ❌ Esci dall'applicazione.")
+		fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-9): "))
 
 		reader := bufio.NewReader(os.Stdin)
 		choice, _ := reader.ReadString('\n')
@@ -782,8 +900,15 @@ func main() {
                 fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'invio dell'email di test: %v", err))
             } else {
                 fmt.Println(color.New(color.FgGreen).Sprint("Email di test inviata con successo!"))
-            }   
+            }  
         case "8":
+            fmt.Println("📂 Unione dei file CSV in corso...")
+            if err := mergeCSVFiles(); err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'unione dei file CSV: %v", err))
+            } else {
+                fmt.Println(color.New(color.FgGreen).Sprint("✅ File CSV unito creato con successo!"))
+            }        
+        case "9":
 			fmt.Println(color.New(color.FgGreen).Sprint("Uscita dal programma. Arrivederci!"))
 			return             
 		default:
