@@ -1,0 +1,12 @@
+﻿ID;FK_PROGETTO_ID;LINK;USERNAME;PASSWORD;DETTAGLI
+25;22;https://login.siteground.com/;tonynuzzo83@gmail.com;Terea2024!;Accesso Siteground
+26;23;policonsultant.it/backend;info@effemmeweb.it;Ludovica2021;Accesso Wordpress
+22;42;https://www.canva.com/;info@effemmeweb.it;OkulosCrm2023!;Accesso a Canva PRO
+24;41;https://gb59f6ad9381601-okulos.adb.eu-milan-1.oraclecloudapps.com/ords/r/apex/workspace-sign-in/oracle-apex-sign-in;workspace: admin username: admin;OkulosCrm2023!;accesso apex oracle
+41;9;https://my.supporthost.com/index.php?rp=/login;francescoquarta@icloud.com;CeramicheQuarta2023!;
+42;9;ceramichequarta.com/login_ceramiche;info@ceramichequarta.com;CeramicheQuarta2023!;"username: Ceramiche Quarta
+Ruolo: Gestore Negozio"
+61;42;Aws Builder;nicholas@effemmeweb.it;Ludovica_2021;AI Amazon su VS Code
+1;9;https://mattiaf146.sg-host.com/wp-admin;info@effemmeweb.it;Ludovica2021;Accessi al sito Wordpress
+21;21;https://managehosting.aruba.it/areautenti.asp;8774526@aruba.it;Servizi2024!;Accesso Hosting
+23;30;https://login.siteground.com/;mattiafiorentin99@gmail.com;Ludovica2021;Siteground Hosting
