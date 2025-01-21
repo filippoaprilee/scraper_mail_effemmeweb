@@ -308,7 +308,8 @@ func printUsage() {
     fmt.Printf("   ➤ %s: Filtra un CSV in base a categorie specifiche.\n", highlight("6. Filtra CSV"))
     fmt.Printf("   ➤ %s: Invia una email di prova per verificare il sistema di invio email.\n", highlight("7. Email di Test"))
     fmt.Printf("   ➤ %s: Unisce file CSV dalla directory in un unico file.\n", highlight("8. Unisci CSV"))
-    fmt.Printf("   ➤ %s: Esci dall'applicazione.\n", highlight("9. Esci"))
+    fmt.Printf("   ➤ %s: Unisce file VCF dalla directory in un unico file.\n", highlight("9. Unisci VCF"))
+    fmt.Printf("   ➤ %s: Esci dall'applicazione.\n", highlight("10. Esci"))
 
     fmt.Println(section("🔔 NOTE IMPORTANTI:"))
     fmt.Printf("   - %s\n", important("Puoi interrompere l'esecuzione in sicurezza usando CTRL+C."))
@@ -509,6 +510,112 @@ func mergeCSVFiles() error {
     return nil
 }
 
+func mergeVCFFiles() error {
+	// Directory dei file VCF
+	vcfDir := filepath.Join("scraper_results", "vcf_results")
+
+	// Trova tutti i file VCF nella directory
+	files, err := filepath.Glob(filepath.Join(vcfDir, "*.vcf"))
+	if err != nil || len(files) == 0 {
+		return fmt.Errorf("nessun file VCF trovato nella directory %s", vcfDir)
+	}
+
+	fmt.Println("\n📂 File VCF disponibili:")
+	for i, file := range files {
+		fmt.Printf("%d. %s\n", i+1, file)
+	}
+
+	fmt.Print("\nSeleziona i file VCF da unire, separandoli con una virgola (es. 1,2,3): ")
+	var input string
+	fmt.Scanln(&input)
+
+	// Parsing dell'input
+	selectedIndexes := strings.Split(input, ",")
+	selectedFiles := make([]string, 0, len(selectedIndexes))
+	for _, indexStr := range selectedIndexes {
+		index, err := strconv.Atoi(strings.TrimSpace(indexStr))
+		if err != nil || index < 1 || index > len(files) {
+			fmt.Printf("⚠️ Indice non valido: %s\n", indexStr)
+			continue
+		}
+		selectedFiles = append(selectedFiles, files[index-1])
+	}
+
+	if len(selectedFiles) == 0 {
+		return fmt.Errorf("nessun file selezionato")
+	}
+
+	// Nome del file di output
+	outputFilePath := filepath.Join(vcfDir, "merged_output.vcf")
+
+	// Creazione del file di output
+	outputFile, err := os.Create(outputFilePath)
+	if err != nil {
+		return fmt.Errorf("errore nella creazione del file di output: %v", err)
+	}
+	defer outputFile.Close()
+
+	writer := bufio.NewWriter(outputFile)
+	defer writer.Flush()
+
+	// Set per rilevare duplicati
+	uniqueContacts := make(map[string]struct{})
+
+	// Unione dei file selezionati
+	for _, filePath := range selectedFiles {
+		fmt.Printf("\nUnione del file: %s\n", filePath)
+
+		inputFile, err := os.Open(filePath)
+		if err != nil {
+			fmt.Printf("❌ Errore nell'apertura del file %s: %v\n", filePath, err)
+			continue
+		}
+		defer inputFile.Close()
+
+		scanner := bufio.NewScanner(inputFile)
+		var contactBuffer strings.Builder
+		isContact := false
+
+		for scanner.Scan() {
+			line := scanner.Text()
+
+			if strings.HasPrefix(line, "BEGIN:VCARD") {
+				isContact = true
+				contactBuffer.Reset()
+				contactBuffer.WriteString(line + "\n")
+				continue
+			}
+
+			if strings.HasPrefix(line, "END:VCARD") {
+				isContact = false
+				contactBuffer.WriteString(line + "\n")
+				contact := contactBuffer.String()
+
+				if _, exists := uniqueContacts[contact]; !exists {
+					uniqueContacts[contact] = struct{}{}
+					_, err := writer.WriteString(contact)
+					if err != nil {
+						fmt.Printf("❌ Errore durante la scrittura nel file di output: %v\n", err)
+						break
+					}
+				} else {
+					fmt.Println("🔁 Contatto duplicato ignorato.")
+				}
+				continue
+			}
+
+			if isContact {
+				contactBuffer.WriteString(line + "\n")
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("❌ Errore durante la lettura del file %s: %v\n", filePath, err)
+		}
+	}
+
+	fmt.Printf("\n✅ File VCF unito creato con successo: %s\n", outputFilePath)
+	return nil
+}
 func filterCSV(inputFile string, outputFile string) error {
     // Apri il file di input
     file, err := os.Open(inputFile)
@@ -717,8 +824,9 @@ func main() {
 		fmt.Println("6. 🔄 Filtra un CSV per categorie specifiche.")
         fmt.Println("7. 📧 Invia una email di prova per verificare il sistema di invio email.")
         fmt.Println("8. 📂 Unisci file CSV dalla directory in un unico file.")
-        fmt.Println("9. ❌ Esci dall'applicazione.")
-		fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-9): "))
+        fmt.Println("9. 📂 Unisci file VCF dalla directory in un unico file.")
+        fmt.Println("10. ❌ Esci dall'applicazione.")
+		fmt.Print("\n" + color.New(color.FgYellow).Sprint("Scegli un'opzione (1-10): "))
 
 		reader := bufio.NewReader(os.Stdin)
 		choice, _ := reader.ReadString('\n')
@@ -907,8 +1015,15 @@ func main() {
                 fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'unione dei file CSV: %v", err))
             } else {
                 fmt.Println(color.New(color.FgGreen).Sprint("✅ File CSV unito creato con successo!"))
-            }        
+            }   
         case "9":
+            fmt.Println("📂 Unione dei file VCF in corso...")
+            if err := mergeVCFFiles(); err != nil {
+                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante l'unione dei file VCF: %v", err))
+            } else {
+                fmt.Println(color.New(color.FgGreen).Sprint("✅ File VCF unito creato con successo!"))
+            }         
+        case "10":
 			fmt.Println(color.New(color.FgGreen).Sprint("Uscita dal programma. Arrivederci!"))
 			return             
 		default:
