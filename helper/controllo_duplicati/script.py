@@ -1,22 +1,17 @@
 import pandas as pd
 
-# Caricare il file CSV
-file_path = "input.csv"  # Modifica con il percorso corretto
+# Specifica il nome del file CSV di input
+input_file = 'final_output.csv'
+# Specifica il nome del file CSV di output
+output_file = 'output.csv'
 
-# Leggere il file CSV
-df = pd.read_csv(file_path)
+# Leggi il file CSV in un DataFrame
+df = pd.read_csv(input_file)
 
-# Trovare i duplicati basati su effemmeweb_telefono1 ed effemmeweb_nome
-duplicati = df[df.duplicated(subset=["EFFEMMEWEB_TELEFONO1", "EFFEMMEWEB_NOME"], keep=False)]
+# Rimuovi le righe duplicate
+df_unique = df.drop_duplicates()
 
-# Filtrare solo quelli con EFFEMMEWEB_FLAG_CHIAMATO e EFFEMMEWEB_FLAG_RISPOSTO uguale a 0
-duplicati_filtrati = duplicati[
-    (duplicati["EFFEMMEWEB_FLAG_CHIAMATO"] == 0) & (duplicati["EFFEMMEWEB_FLAG_RISPOSTO"] == 0)
-]
+# Salva il DataFrame risultante in un nuovo file CSV (senza l'indice)
+df_unique.to_csv(output_file, index=False)
 
-# Salvare i duplicati filtrati in un nuovo file
-duplicati_filtrati.to_csv("duplicati_filtrati.csv", index=False)
-
-# Stampare i risultati
-print("Duplicati trovati con FLAG_CHIAMATO e FLAG_RISPOSTO = 0:", len(duplicati_filtrati))
-print(duplicati_filtrati.head())
+print(f"File {input_file} elaborato. Duplicati rimossi e salvati in {output_file}.")
