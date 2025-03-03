@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 
 # URL della pagina Wikipedia
-url = "https://it.wikipedia.org/wiki/Comuni_della_Sardegna"
+url = "https://it.wikipedia.org/wiki/Comuni_della_Toscana"
 
 response = requests.get(url)
 response.raise_for_status()  # Controlla eventuali errori
