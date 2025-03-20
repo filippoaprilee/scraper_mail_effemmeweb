@@ -43,6 +43,8 @@ type EmailConfig struct {
     } `json:"templates"`
 }
 
+
+
 // Metodo Encode per urlValues
 func (u urlValues) Encode() string {
     var buf strings.Builder
@@ -748,6 +750,7 @@ func selectInputFile(directory string) (string, error) {
 }
 
 func main() {
+    var totalRows int
 	clearTerminal()
 
 	printUsage()
@@ -792,26 +795,30 @@ func main() {
 	}
 
 	go func() {
-		<-signalChan
-		fmt.Println("\nCTRL+C rilevato. Attendi...")
-		cancel()
-
-		// Controlla se un file CSV è stato generato
-		generatedCSV, err := findLastGeneratedCSV()
-		if err != nil {
-			fmt.Println(color.New(color.FgRed).Sprint("Errore durante la ricerca del file CSV: ", err))
-			return
-		}
-
-		if generatedCSV != "" {
-			// Elabora il file CSV senza richiedere una nuova selezione della categoria
-			handleCSVOptions(ctx, generatedCSV)
-		} else {
-			fmt.Println(color.New(color.FgRed).Sprint("Nessun file CSV generato. Uscita dal programma."))
-		}
-
-		os.Exit(0)
-	}()
+        <-signalChan
+        fmt.Println("\nCTRL+C rilevato. Attendi...")
+        cancel()
+    
+        // Controlla se un file CSV è stato generato
+        generatedCSV, err := findLastGeneratedCSV()
+        if err != nil {
+            fmt.Println(color.New(color.FgRed).Sprint("Errore durante la ricerca del file CSV: ", err))
+            return
+        }
+    
+        if generatedCSV != "" {
+            // Elabora il file CSV senza richiedere una nuova selezione della categoria
+            handleCSVOptions(ctx, generatedCSV)
+        } else {
+            fmt.Println(color.New(color.FgRed).Sprint("Nessun file CSV generato. Uscita dal programma."))
+        }
+    
+        // 🔴 Usa il valore aggiornato di `totalRows`
+        sendReportEmail(categories, totalRows)
+    
+        os.Exit(0)
+    }()
+    
 
 	// Menu principale
 	for {
@@ -1039,17 +1046,17 @@ func cleanURLsInCSVFiles(dir string) error {
     }
 
     for _, file := range files {
-        fmt.Printf("Pulizia degli URL nel file: %s\n", file)
-
+        fmt.Printf("🔄 Pulizia degli URL nel file: %s\n", file)
         if err := cleanURLsInCSV(file); err != nil {
-            fmt.Printf("Errore durante la pulizia del file %s: %v\n", file, err)
+            fmt.Printf("❌ Errore nella pulizia del file %s: %v\n", file, err)
         } else {
-            fmt.Printf("File %s pulito con successo.\n", file)
+            fmt.Printf("✅ File %s pulito con successo.\n", file)
         }
     }
 
     return nil
 }
+
 
 func cleanURLsInCSV(filePath string) error {
     // Leggi tutto il file in memoria e chiudilo immediatamente
@@ -1180,58 +1187,120 @@ func confirmAction(message string) bool {
 
 func runScrapingFlow(ctx context.Context, categories []string, generatedCSV *string) error {
     fmt.Println("\n📋 Ecco la lista delle categorie disponibili per lo scraping:")
-	for i, category := range categories {
-		fmt.Printf("   %d. %s\n", i+1, category)
-	}
+    for i, category := range categories {
+        fmt.Printf("   %d. %s\n", i+1, category)
+    }
 
-	if !confirmAction("Vuoi procedere con lo scraping per tutte queste categorie?") {
-		fmt.Println("Scraping annullato.")
-		return nil
-	}
+    if !confirmAction("Vuoi procedere con lo scraping per tutte queste categorie?") {
+        fmt.Println("Scraping annullato.")
+        return nil
+    }
 
-	startTime := time.Now()
-    fmt.Println("Avvio dello scraping...")
+    startTime := time.Now()
+    fmt.Println("🕵️‍♂️ Avvio dello scraping...")
 
-    // Canale per raccogliere i file CSV generati da tutte le categorie
     resultChannel := make(chan string, len(categories))
+    var wg sync.WaitGroup
 
-    var wg sync.WaitGroup // Gruppo di attesa per le goroutine
+    maxRetries := 3
+    retryDelay := 5 * time.Minute
 
-    // Avvia lo scraping per ogni categoria contemporaneamente
     for _, category := range categories {
-        wg.Add(1) // Aggiungi un lavoro al gruppo di attesa
+        wg.Add(1)
 
-        // Avvia una goroutine per lo scraping della categoria
         go func(category string) {
-            defer wg.Done() // Segna la goroutine come terminata
+            defer wg.Done()
+            attempt := 1
+            var newCSV string
+            var err error
 
-            newCSV, err := runScrapingForCategory(ctx, category)
-            if err != nil {
-                fmt.Println(color.New(color.FgRed).Sprintf("Errore durante lo scraping per la categoria %s: %v", category, err))
-                return
+            for attempt <= maxRetries {
+                newCSV, err = runScrapingForCategory(ctx, category)
+                if err == nil {
+                    resultChannel <- newCSV
+                    return
+                }
+
+                fmt.Printf("⚠️ Tentativo %d/%d fallito per la categoria '%s'. Ritento tra %v...\n", attempt, maxRetries, category, retryDelay)
+                time.Sleep(retryDelay)
+                attempt++
             }
 
-            // Invia il file generato al canale
-            resultChannel <- newCSV
+            fmt.Printf("❌ Scraping fallito per la categoria '%s' dopo %d tentativi.\n", category, maxRetries)
         }(category)
     }
 
-    // Attendi che tutte le goroutine terminino
     wg.Wait()
-    close(resultChannel) // Chiudi il canale
+    close(resultChannel)
 
-    // Raccogli i file generati e aggiorna la variabile generatedCSV
+    totalRows := 0
     for newCSV := range resultChannel {
-        fmt.Printf("Nuovo file CSV generato: %s\n", newCSV)
-        *generatedCSV = newCSV // Memorizza l'ultimo file generato
+        fmt.Printf("📂 Nuovo file CSV generato: %s\n", newCSV)
+        *generatedCSV = newCSV
+        rows, err := countCSVRows(newCSV)
+        if err == nil {
+            totalRows += rows // 🔴 AGGIORNA totalRows CON IL NUMERO DI RIGHE TROVATE
+        }
+    }    
+
+    elapsedTime := time.Since(startTime).Minutes()
+    printTimer(int(elapsedTime))
+
+    fmt.Println("🧹 Pulizia automatica degli URL nei CSV generati...")
+    if err := cleanURLsInCSVFiles("scraper_results/csv_results"); err != nil {
+        fmt.Println("❌ Errore nella pulizia degli URL:", err)
+    } else {
+        fmt.Println("✅ Pulizia URL completata con successo.")
     }
 
-    // Calcola il tempo trascorso in minuti
-    elapsedTime := time.Since(startTime).Minutes()
-    printTimer(int(elapsedTime))  // Mostra il tempo in minuti
-
+    sendReportEmail(categories, totalRows)
     return nil
 }
+
+func sendReportEmail(categories []string, totalRows int) {
+    emailReport := fmt.Sprintf(
+        "Ciao ragazzi di Effemmeweb,\n\n"+
+        "Oggi lo scraper ha elaborato la/e categorie: %s.\n"+
+        "Ha registrato un totale di %d contatti nei CSV generati.\n"+
+        "Gli URL sono stati già puliti in modo automatico.\n\n"+
+        "📊 Report generato automaticamente.",
+        strings.Join(categories, ", "), totalRows,
+    )
+
+    smtpConfig := map[string]string{
+        "server":   "mail.effemmeweb.it",
+        "port":     "465",
+        "user":     "info@effemmeweb.it",
+        "password": "Ludovica2021",
+    }
+
+    sendEmail("info@effemmeweb.it", "📊 Report Scraping Effemmeweb", emailReport, smtpConfig["server"], smtpConfig["port"], smtpConfig["user"], smtpConfig["password"])
+}
+
+func countCSVRows(filePath string) (int, error) {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return 0, fmt.Errorf("errore nell'apertura del file CSV: %v", err)
+    }
+    defer file.Close()
+
+    reader := csv.NewReader(file)
+    count := 0
+
+    for {
+        _, err := reader.Read()
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            return 0, fmt.Errorf("errore nella lettura del file CSV: %v", err)
+        }
+        count++
+    }
+
+    return count - 1, nil // Escludiamo l'intestazione
+}
+
 
 func processCSV(ctx context.Context, csvFile string, category string) error {
 	// Gestione delle domande per il file CSV
