@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
     "net/url"
+    "net/http"
+	"bytes"
     "sort"
     "github.com/PuerkitoBio/goquery"
 	"syscall"
@@ -750,7 +752,7 @@ func selectInputFile(directory string) (string, error) {
 }
 
 func main() {
-    var totalRows int
+    var totalRows = new(int)
 	clearTerminal()
 
 	printUsage()
@@ -809,12 +811,22 @@ func main() {
         if generatedCSV != "" {
             // Elabora il file CSV senza richiedere una nuova selezione della categoria
             handleCSVOptions(ctx, generatedCSV)
+
+            // 🔁 Calcola righe dal CSV interrotto
+            if rows, err := cleanAndCountCSVRows(generatedCSV); err == nil {
+                *totalRows += rows
+            } else {
+                fmt.Println("⚠️ Errore nel conteggio righe CSV:", err)
+            }            
+
         } else {
             fmt.Println(color.New(color.FgRed).Sprint("Nessun file CSV generato. Uscita dal programma."))
         }
     
         // 🔴 Usa il valore aggiornato di `totalRows`
-        sendReportEmail(categories, totalRows)
+        fmt.Printf("Categorie: %v\n", categories)
+        fmt.Printf("Totale righe: %d\n", totalRows)
+        sendReportEmail(categories, *totalRows)
     
         os.Exit(0)
     }()
@@ -842,7 +854,7 @@ func main() {
 		switch choice {
 		case "1":
 			if confirmAction("Confermi di voler avviare il processo di scraping? Inserisci 'y' per continuare o 'n' per annullare:") {
-				if err := runScrapingFlow(ctx, categories, &generatedCSV); err != nil {
+                if err := runScrapingFlow(ctx, categories, &generatedCSV, totalRows); err != nil {
 					fmt.Println(color.New(color.FgRed).Sprintf("Errore durante lo scraping: %v", err))
 				}
 			}
@@ -1185,7 +1197,7 @@ func confirmAction(message string) bool {
 	return choice == "y"
 }
 
-func runScrapingFlow(ctx context.Context, categories []string, generatedCSV *string) error {
+func runScrapingFlow(ctx context.Context, categories []string, generatedCSV *string, totalRows *int) error {
     fmt.Println("\n📋 Ecco la lista delle categorie disponibili per lo scraping:")
     for i, category := range categories {
         fmt.Printf("   %d. %s\n", i+1, category)
@@ -1233,15 +1245,14 @@ func runScrapingFlow(ctx context.Context, categories []string, generatedCSV *str
     wg.Wait()
     close(resultChannel)
 
-    totalRows := 0
     for newCSV := range resultChannel {
         fmt.Printf("📂 Nuovo file CSV generato: %s\n", newCSV)
         *generatedCSV = newCSV
         rows, err := countCSVRows(newCSV)
         if err == nil {
-            totalRows += rows // 🔴 AGGIORNA totalRows CON IL NUMERO DI RIGHE TROVATE
+            *totalRows += rows
         }
-    }    
+    }      
 
     elapsedTime := time.Since(startTime).Minutes()
     printTimer(int(elapsedTime))
@@ -1253,17 +1264,19 @@ func runScrapingFlow(ctx context.Context, categories []string, generatedCSV *str
         fmt.Println("✅ Pulizia URL completata con successo.")
     }
 
-    sendReportEmail(categories, totalRows)
+    fmt.Printf("Categorie: %v\n", categories)
+    fmt.Printf("Totale righe: %d\n", totalRows)
+    sendReportEmail(categories, *totalRows)
     return nil
 }
 
 func sendReportEmail(categories []string, totalRows int) {
     emailReport := fmt.Sprintf(
         "Ciao ragazzi di Effemmeweb,\n\n"+
-        "Oggi lo scraper ha elaborato la/e categorie: %s.\n"+
-        "Ha registrato un totale di %d contatti nei CSV generati.\n"+
-        "Gli URL sono stati già puliti in modo automatico.\n\n"+
-        "📊 Report generato automaticamente.",
+            "Oggi lo scraper ha elaborato la/e categorie: %s.\n"+
+            "Ha registrato un totale di %d contatti nei CSV generati.\n"+
+            "Gli URL sono stati già puliti in modo automatico.\n\n"+
+            "📊 Report generato automaticamente.",
         strings.Join(categories, ", "), totalRows,
     )
 
@@ -1274,8 +1287,50 @@ func sendReportEmail(categories []string, totalRows int) {
         "password": "Ludovica2021",
     }
 
+    // Invia email
     sendEmail("info@effemmeweb.it", "📊 Report Scraping Effemmeweb", emailReport, smtpConfig["server"], smtpConfig["port"], smtpConfig["user"], smtpConfig["password"])
+
+    // 🔔 Invia anche su Discord
+    discordWebhook := "https://discord.com/api/webhooks/1352620789559590932/HP7kdhBMNjZkWKjMuAWDQ-L6yE51BHixH8i4Ymkj7TrAsYjkepEbUDjlTGwR6vSX142j"
+    discordMessage := fmt.Sprintf(
+        "📊 **Report Scraping Effemmeweb**\n\n"+
+            "🗂️ Categorie elaborate: %s\n"+
+            "📬 Contatti trovati: %d\n"+
+            "🧹 Gli URL sono stati puliti automaticamente.",
+        strings.Join(categories, ", "), totalRows,
+    )
+
+    if err := sendDiscordNotification(discordWebhook, discordMessage); err != nil {
+        fmt.Printf("⚠️ Errore nell'invio del messaggio Discord: %v\n", err)
+    } else {
+        fmt.Println("✅ Notifica Discord inviata con successo!")
+    }
 }
+
+func sendDiscordNotification(webhookURL, message string) error {
+    payload := map[string]string{
+        "content": message,
+    }
+
+    jsonData, err := json.Marshal(payload)
+    if err != nil {
+        return fmt.Errorf("errore nel creare il payload JSON: %v", err)
+    }
+
+    resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(jsonData))
+    if err != nil {
+        return fmt.Errorf("errore nella richiesta POST al webhook Discord: %v", err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode >= 400 {
+        body, _ := ioutil.ReadAll(resp.Body)
+        return fmt.Errorf("errore Discord webhook (status %d): %s", resp.StatusCode, string(body))
+    }
+
+    return nil
+}
+
 
 func countCSVRows(filePath string) (int, error) {
     file, err := os.Open(filePath)
@@ -1285,22 +1340,26 @@ func countCSVRows(filePath string) (int, error) {
     defer file.Close()
 
     reader := csv.NewReader(file)
-    count := 0
+    reader.FieldsPerRecord = -1 // Permette righe con un numero variabile di campi
 
+    count := 0
     for {
-        _, err := reader.Read()
+        record, err := reader.Read()
         if err == io.EOF {
             break
         }
         if err != nil {
             return 0, fmt.Errorf("errore nella lettura del file CSV: %v", err)
         }
-        count++
+
+        // Ignora righe vuote
+        if len(record) > 0 && strings.TrimSpace(record[0]) != "" {
+            count++
+        }
     }
 
-    return count - 1, nil // Escludiamo l'intestazione
+    return count, nil
 }
-
 
 func processCSV(ctx context.Context, csvFile string, category string) error {
 	// Gestione delle domande per il file CSV
@@ -1603,6 +1662,35 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
     }
 
     return outputFileName, nil // Restituisce il nome del file CSV generato per la categoria
+}
+
+func cleanAndCountCSVRows(filePath string) (int, error) {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return 0, fmt.Errorf("errore nell'apertura del file CSV: %v", err)
+    }
+    defer file.Close()
+
+    reader := csv.NewReader(file)
+    records, err := reader.ReadAll()
+    if err != nil {
+        return 0, fmt.Errorf("errore nella lettura del file CSV: %v", err)
+    }
+
+    if len(records) <= 1 {
+        return 0, nil // Se il file ha solo l'intestazione o è vuoto
+    }
+
+    headerLen := len(records[0])
+    validRows := 0
+
+    for _, record := range records[1:] { // Ignora l'intestazione
+        if len(record) == headerLen {
+            validRows++
+        }
+    }
+
+    return validRows, nil
 }
 
 func cleanLastRowFromCSV(filePath string) error {
