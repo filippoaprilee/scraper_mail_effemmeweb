@@ -1615,7 +1615,7 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
 
     opts := []func(*scrapemateapp.Config) error{
         scrapemateapp.WithConcurrency(8),
-        scrapemateapp.WithExitOnInactivity(3 * time.Minute),
+        scrapemateapp.WithExitOnInactivity(3 * time.Minute), // Mantieni attiva per triggerare retry
         scrapemateapp.WithJS(scrapemateapp.DisableImages()),
     }
 
@@ -1650,18 +1650,32 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
 
     jobs := convertToJobs(keywordJobs)
 
-    // Avvia lo scraping con il contesto
-    select {
-    case <-ctx.Done():
-        fmt.Println("Scraping interrotto.")
-        return "", nil
-    default:
-        if err := app.Start(ctx, jobs...); err != nil && ctx.Err() != context.Canceled {
-            return "", fmt.Errorf("errore durante lo scraping per la categoria %s: %v", category, err)
+    // 🔁 Retry loop in caso di inattività
+    retryOnInactivity := true
+    maxAttempts := -1 // infinito
+    attempt := 0
+
+    for retryOnInactivity && (maxAttempts < 0 || attempt < maxAttempts) {
+        select {
+        case <-ctx.Done():
+            fmt.Println("⛔ Scraping interrotto manualmente.")
+            return "", nil
+        default:
+            attempt++
+            fmt.Printf("🚀 Avvio scraping (Tentativo #%d) per categoria: %s\n", attempt, category)
+
+            err := app.Start(ctx, jobs...)
+            if err == nil || ctx.Err() == context.Canceled {
+                fmt.Println("✅ Scraping completato correttamente.")
+                break
+            }
+
+            fmt.Printf("⚠️ Scraper interrotto per inattività o errore: %v. Riavvio in 5 secondi...\n", err)
+            time.Sleep(5 * time.Second)
         }
     }
 
-    return outputFileName, nil // Restituisce il nome del file CSV generato per la categoria
+    return outputFileName, nil
 }
 
 func cleanAndCountCSVRows(filePath string) (int, error) {
