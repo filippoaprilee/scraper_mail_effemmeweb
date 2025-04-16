@@ -1106,7 +1106,7 @@ func startScrapingWithReference(ctx context.Context, category string, refSet map
     }
 
     opts := []func(*scrapemateapp.Config) error{
-        scrapemateapp.WithConcurrency(8),
+        scrapemateapp.WithConcurrency(70),
         scrapemateapp.WithExitOnInactivity(3 * time.Minute),
         scrapemateapp.WithJS(scrapemateapp.DisableImages()),
     }
