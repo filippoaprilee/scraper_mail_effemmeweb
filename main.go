@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"net/smtp"
 	"os"
+    "errors"
 	"os/exec"
     "regexp"
 	"os/signal"
@@ -38,6 +39,14 @@ import (
 
 type urlValues map[string]string
 
+// ---- JSON per i meta-tag dei siti ------------
+type SiteMeta struct {
+    NomeAttivita string            `json:"nome_attivita"`
+    NomeSito     string            `json:"nome_sito"`
+    Meta         map[string]string `json:"meta"`
+}
+
+
 type EmailConfig struct {
     Templates map[string]struct {
         Subject string   `json:"subject"`
@@ -60,6 +69,47 @@ func (u urlValues) Encode() string {
     }
     return buf.String()
 }
+
+func fetchMetaTags(siteURL string) (map[string]string, error) {
+    meta := make(map[string]string)
+
+    client := &http.Client{Timeout: 15 * time.Second}
+    req, err := http.NewRequest("GET", siteURL, nil)
+    if err != nil {
+        return nil, err
+    }
+    req.Header.Set("User-Agent", "EffemmeWeb-Scraper/1.0")
+
+    resp, err := client.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode >= 400 {
+        return nil, errors.New(resp.Status)
+    }
+
+    doc, err := goquery.NewDocumentFromReader(resp.Body)
+    if err != nil {
+        return nil, err
+    }
+
+    doc.Find("head meta").Each(func(_ int, s *goquery.Selection) {
+        name, _ := s.Attr("name")
+        if name == "" {
+            name, _ = s.Attr("property") // og:title, twitter:card …
+        }
+        if name == "" {
+            return
+        }
+        content, _ := s.Attr("content")
+        meta[name] = content
+    })
+
+    return meta, nil
+}
+
 
 // extractEmailsFromHTML estrae le email dal contenuto HTML analizzato
 func extractEmailsFromHTML(htmlContent string) ([]string, error) {
@@ -1101,9 +1151,14 @@ func startScrapingWithReference(ctx context.Context, category string, refSet map
     defer vcfFile.Close()
 
     // Usa il writer personalizzato che riceve il reference set
-    writers := []scrapemate.ResultWriter{
-        NewCustomCsvWriterWithVCFWithReference(csvWriter, vcfFile, refSet),
-    }
+    stamp := currentTime                       // è già calcolato poco sopra
+jsonWriter, _ := NewJsonSiteWriter(category, stamp, nil)
+
+writers := []scrapemate.ResultWriter{
+    NewCustomCsvWriterWithVCFWithReference(csvWriter, vcfFile, nil),
+    jsonWriter,
+}
+
 
     opts := []func(*scrapemateapp.Config) error{
         scrapemateapp.WithConcurrency(70),
@@ -1824,10 +1879,17 @@ func runScrapingForCategory(ctx context.Context, category string) (string, error
     }
     defer vcfFile.Close()
 
-    // Configura lo scraping per la categoria specifica
-    writers := []scrapemate.ResultWriter{
-        NewCustomCsvWriterWithVCFWithReference(csvWriter, vcfFile, nil),
-    }
+// 1️⃣  crea il writer JSON
+stamp := currentTime
+jsonWriter, _ := NewJsonSiteWriter(category, stamp, nil)  // ← nil al posto di refSet
+
+// 2️⃣  elenco writer
+writers := []scrapemate.ResultWriter{
+    NewCustomCsvWriterWithVCFWithReference(csvWriter, vcfFile, nil), // ← nil
+    jsonWriter,
+}
+
+    
     
 
     opts := []func(*scrapemateapp.Config) error{
@@ -2758,6 +2820,97 @@ type customCsvWriter struct {
 	names   map[string]bool
     refSet map[string]struct{}
 }
+
+// -------- jsonSiteWriter: scrive i meta-tag per ogni sito -------------
+type jsonSiteWriter struct {
+    mu       sync.Mutex
+    file     *os.File
+    enc      *json.Encoder
+    emitted  bool
+    refSet   map[string]struct{}
+}
+
+func NewJsonSiteWriter(category, stamp string, refSet map[string]struct{}) (scrapemate.ResultWriter, error) {
+    dir := filepath.Join(baseDir, "json_results_sites")
+    if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+        return nil, err
+    }
+    path := filepath.Join(dir, "json_results_sites_"+category+"_"+stamp+".json")
+
+    f, err := os.Create(path)
+    if err != nil {
+        return nil, err
+    }
+
+    // apre l’array JSON
+    if _, err := f.WriteString("[\n"); err != nil {
+        return nil, err
+    }
+
+    return &jsonSiteWriter{
+        file:   f,
+        enc:    json.NewEncoder(f),
+        refSet: refSet,
+    }, nil
+}
+
+func (w *jsonSiteWriter) Run(ctx context.Context, results <-chan scrapemate.Result) error {
+    for {
+        select {
+        case <-ctx.Done():
+            w.closeFile()
+            return nil
+        case res, ok := <-results:
+            if !ok {
+                w.closeFile()
+                return nil
+            }
+
+            entry, ok := res.Data.(*gmaps.Entry)
+            if !ok || entry.WebSite == "" {
+                continue
+            }
+
+            // evita duplicati già noti
+            if w.refSet != nil {
+                key := strings.ToLower(entry.Title + entry.WebSite)
+                if _, dup := w.refSet[key]; dup {
+                    continue
+                }
+            }
+
+            meta, err := fetchMetaTags(entry.WebSite)
+            if err != nil || len(meta) == 0 {
+                continue
+            }
+
+            record := SiteMeta{
+                NomeAttivita: entry.Title,
+                NomeSito:     entry.WebSite,
+                Meta:         meta,
+            }
+
+            w.mu.Lock()
+            if w.emitted {
+                _, _ = w.file.WriteString(",\n")
+            }
+            _ = w.enc.Encode(&record) // json.Encoder aggiunge \n
+            w.emitted = true
+            w.mu.Unlock()
+        }
+    }
+}
+
+func (w *jsonSiteWriter) closeFile() {
+    w.mu.Lock()
+    defer w.mu.Unlock()
+    if w.file != nil {
+        _, _ = w.file.WriteString("\n]\n")
+        _ = w.file.Close()
+        w.file = nil
+    }
+}
+
 
 func (cw *customCsvWriter) WriteResult(result scrapemate.Result) error {
     entry, ok := result.Data.(*gmaps.Entry)
