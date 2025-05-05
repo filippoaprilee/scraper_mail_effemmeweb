@@ -39,13 +39,17 @@ import (
 
 type urlValues map[string]string
 
-// ---- JSON per i meta-tag dei siti ------------
+// ---- JSON per i meta-tag dei siti (+ info SEO) -----------------------
 type SiteMeta struct {
-    NomeAttivita string            `json:"nome_attivita"`
-    NomeSito     string            `json:"nome_sito"`
-    Meta         map[string]string `json:"meta"`
+    NomeAttivita     string            `json:"nome_attivita"`
+    NomeSito         string            `json:"nome_sito"`
+    Slug             string            `json:"slug"`              // /chi-siamo, /it/home…
+    SeoTitle         string            `json:"seo_title"`         // <title>
+    SeoKeywords      string            `json:"seo_keywords"`      // meta keywords
+    MetaDescription  string            `json:"meta_description"`  // meta description
+    MetaKeywords     string            `json:"meta_keywords"`     // copia keywords per compat.
+    Meta             map[string]string `json:"meta"`              // tutti gli altri meta
 }
-
 
 type EmailConfig struct {
     Templates map[string]struct {
@@ -70,44 +74,163 @@ func (u urlValues) Encode() string {
     return buf.String()
 }
 
-func fetchMetaTags(siteURL string) (map[string]string, error) {
+// fetchMetaTags ritorna: (1) mappa meta completa, (2) <title>, (3) keywords,
+// (4) meta-description
+func fetchMetaTags(siteURL string) (map[string]string, string, string, string, error) {
     meta := make(map[string]string)
+    kwsSet := make(map[string]struct{}) // deduplica keywords
 
     client := &http.Client{Timeout: 15 * time.Second}
     req, err := http.NewRequest("GET", siteURL, nil)
     if err != nil {
-        return nil, err
+        return nil, "", "", "", err
     }
     req.Header.Set("User-Agent", "EffemmeWeb-Scraper/1.0")
 
     resp, err := client.Do(req)
     if err != nil {
-        return nil, err
+        return nil, "", "", "", err
     }
     defer resp.Body.Close()
 
     if resp.StatusCode >= 400 {
-        return nil, errors.New(resp.Status)
+        return nil, "", "", "", errors.New(resp.Status)
     }
 
     doc, err := goquery.NewDocumentFromReader(resp.Body)
     if err != nil {
-        return nil, err
+        return nil, "", "", "", err
     }
 
+    // ---- <title>
+    seoTitle := strings.TrimSpace(doc.Find("head title").First().Text())
+
+    var metaDescription string
+
+    // ---- META tradizionali
     doc.Find("head meta").Each(func(_ int, s *goquery.Selection) {
-        name, _ := s.Attr("name")
-        if name == "" {
-            name, _ = s.Attr("property") // og:title, twitter:card …
+        // chiave
+        var key string
+        switch {
+        case s.AttrOr("name", "") != "":
+            key = s.AttrOr("name", "")
+        case s.AttrOr("property", "") != "":
+            key = s.AttrOr("property", "")
+        case s.AttrOr("http-equiv", "") != "":
+            key = "http-equiv:" + s.AttrOr("http-equiv", "")
+        case s.AttrOr("itemprop", "") != "":
+            key = "itemprop:" + s.AttrOr("itemprop", "")
+        case s.AttrOr("charset", "") != "":
+            key = "charset"
         }
-        if name == "" {
+        if key == "" {
             return
         }
-        content, _ := s.Attr("content")
-        meta[name] = content
+
+        // valore
+        val := s.AttrOr("content", "")
+        if key == "charset" {
+            val = s.AttrOr("charset", "")
+        }
+        if val == "" {
+            return
+        }
+
+        // --- intercetta possibili keywords
+        lowKey := strings.ToLower(key)
+        switch lowKey {
+        case "keywords", "news_keywords":
+            splitAppendKeywords(val, kwsSet)
+        case "article:tag":
+            kwsSet[strings.TrimSpace(val)] = struct{}{}
+        case "description":
+            metaDescription = val
+        }
+
+        // salva nella mappa (risolve duplicati con #n)
+        if _, ok := meta[key]; ok {
+            for i := 2; ; i++ {
+                alt := key + "#" + strconv.Itoa(i)
+                if _, clash := meta[alt]; !clash {
+                    meta[alt] = val
+                    break
+                }
+            }
+        } else {
+            meta[key] = val
+        }
     })
 
-    return meta, nil
+    // ---- JSON-LD - keywords / about
+    doc.Find(`script[type="application/ld+json"]`).Each(func(_ int, s *goquery.Selection) {
+        raw := strings.TrimSpace(s.Text())
+        if raw == "" {
+            return
+        }
+        var data interface{}
+        if json.Unmarshal([]byte(raw), &data) != nil {
+            return // json non valido
+        }
+        extractKeywordsFromJSONLD(data, kwsSet)
+    })
+
+    // prepara stringa finale keywords
+    var allKeywords []string
+    for k := range kwsSet {
+        if k != "" {
+            allKeywords = append(allKeywords, k)
+        }
+    }
+    seoKeywords := strings.Join(allKeywords, ", ")
+
+    // se description mancante, prova con og:description
+    if metaDescription == "" {
+        if og := meta["og:description"]; og != "" {
+            metaDescription = og
+        }
+    }
+
+    return meta, seoTitle, seoKeywords, metaDescription, nil
+}
+
+// split by comma / punto-virgola e aggiunge al set
+func splitAppendKeywords(raw string, set map[string]struct{}) {
+    for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+        return r == ',' || r == ';'
+    }) {
+        kw := strings.TrimSpace(part)
+        if kw != "" {
+            set[kw] = struct{}{}
+        }
+    }
+}
+
+// estrae ricorsivamente "keywords" o "about" (stringa o array) da JSON-LD
+func extractKeywordsFromJSONLD(node interface{}, set map[string]struct{}) {
+    switch v := node.(type) {
+    case map[string]interface{}:
+        for k, val := range v {
+            lk := strings.ToLower(k)
+            if lk == "keywords" || lk == "about" {
+                switch vv := val.(type) {
+                case string:
+                    splitAppendKeywords(vv, set)
+                case []interface{}:
+                    for _, it := range vv {
+                        if s, ok := it.(string); ok {
+                            splitAppendKeywords(s, set)
+                        }
+                    }
+                }
+            } else {
+                extractKeywordsFromJSONLD(val, set)
+            }
+        }
+    case []interface{}:
+        for _, it := range v {
+            extractKeywordsFromJSONLD(it, set)
+        }
+    }
 }
 
 
@@ -2879,16 +3002,35 @@ func (w *jsonSiteWriter) Run(ctx context.Context, results <-chan scrapemate.Resu
                 }
             }
 
-            meta, err := fetchMetaTags(entry.WebSite)
+            meta, title, keywords, description, err := fetchMetaTags(entry.WebSite)
             if err != nil || len(meta) == 0 {
                 continue
             }
-
+            
+            slug := func() string {
+                u, err := url.Parse(entry.WebSite)
+                if err != nil {
+                    return ""
+                }
+                // assicuriamoci di avere qualcosa ("/" => "")
+                p := strings.Trim(u.Path, "/")
+                if p == "" {
+                    return "/"
+                }
+                return "/" + p
+            }()
+            
             record := SiteMeta{
-                NomeAttivita: entry.Title,
-                NomeSito:     entry.WebSite,
-                Meta:         meta,
+                NomeAttivita:    entry.Title,
+                NomeSito:        entry.WebSite,
+                Slug:            slug,
+                SeoTitle:        title,
+                SeoKeywords:     keywords,
+                MetaDescription: description,
+                MetaKeywords:    keywords, // alias
+                Meta:            meta,
             }
+            
 
             w.mu.Lock()
             if w.emitted {
